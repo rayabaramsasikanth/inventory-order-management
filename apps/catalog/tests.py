@@ -1,5 +1,9 @@
 from django.core.exceptions import ValidationError
-from apps.catalog.services import record_stock_movement
+from apps.catalog.services import (
+    record_stock_movement,
+    reserve_stock,
+    release_reserved_stock,
+)
 
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
@@ -532,6 +536,73 @@ class StockMovementServiceTests(APITestCase):
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.quantity, 100)
         self.assertEqual(StockMovement.objects.count(), 0)
+
+
+    def test_reserve_available_stock(self):
+        # Reserving stock must not reduce the physical quantity.
+        self.inventory.quantity = 10
+        self.inventory.reserved_quantity = 2
+        self.inventory.save()
+
+        reserve_stock(
+            product=self.product,
+            warehouse=self.warehouse,
+            quantity=3,
+        )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 10)
+        self.assertEqual(self.inventory.reserved_quantity, 5)
+
+    def test_reservation_larger_than_available_stock_is_rejected(self):
+        # Only two units are available: 10 physical minus 8 reserved.
+        self.inventory.quantity = 10
+        self.inventory.reserved_quantity = 8
+        self.inventory.save()
+
+        with self.assertRaises(ValidationError):
+            reserve_stock(
+                product=self.product,
+                warehouse=self.warehouse,
+                quantity=3,
+            )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 10)
+        self.assertEqual(self.inventory.reserved_quantity, 8)
+
+    def test_release_reserved_stock(self):
+        # Releasing a reservation makes stock available without changing
+        # the physical quantity in the warehouse.
+        self.inventory.quantity = 10
+        self.inventory.reserved_quantity = 5
+        self.inventory.save()
+
+        release_reserved_stock(
+            product=self.product,
+            warehouse=self.warehouse,
+            quantity=2,
+        )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 10)
+        self.assertEqual(self.inventory.reserved_quantity, 3)
+
+    def test_cannot_release_more_than_reserved_stock(self):
+        self.inventory.quantity = 10
+        self.inventory.reserved_quantity = 2
+        self.inventory.save()
+
+        with self.assertRaises(ValidationError):
+            release_reserved_stock(
+                product=self.product,
+                warehouse=self.warehouse,
+                quantity=3,
+            )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 10)
+        self.assertEqual(self.inventory.reserved_quantity, 2)
 
 
 class StockMovementAPITests(APITestCase):
