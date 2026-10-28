@@ -104,8 +104,8 @@ class InventoryListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         # Only administrators and warehouse staff can create stock records.
         if self.request.method == "POST":
-            return [IsBusinessAdmin() | IsWarehouseStaff()]
-
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
+        
         # Authenticated users can list inventory.
         return super().get_permissions()
 
@@ -121,8 +121,8 @@ class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_permissions(self):
         # Only administrators and warehouse staff can change inventory.
         if self.request.method in ["PUT", "PATCH", "DELETE"]:
-            return [IsBusinessAdmin() | IsWarehouseStaff()]
-
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
+        
         # Authenticated users can retrieve an individual stock record.
         return super().get_permissions()
 

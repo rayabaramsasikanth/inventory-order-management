@@ -1,36 +1,38 @@
 from django.core.exceptions import ValidationError
-from apps.catalog.services import (
-    record_stock_movement,
-    reserve_stock,
-    release_reserved_stock,
-)
-
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.catalog.models import Supplier, Product, Warehouse, Inventory, StockMovement
-from apps.core.models import User
+from apps.catalog.models import (
+    Supplier,
+    Product,
+    Warehouse,
+    Inventory,
+    StockMovement,
+)
+from apps.catalog.services import (
+    record_stock_movement,
+    reserve_stock,
+    release_reserved_stock,
+    transfer_stock,
+)
+
 from apps.core.permissions import ADMIN_GROUP, WAREHOUSE_GROUP
 
-from apps.catalog.services import transfer_stock
-
+from unittest.mock import patch
 
 User = get_user_model()
 
 
 class SupplierAPITests(APITestCase):
     def setUp(self):
-        # Create an administrator and a warehouse staff member.
         self.admin = User.objects.create_user(
             username="supplieradmin",
             password="StrongPass!927",
         )
-        self.admin_group, _ = Group.objects.get_or_create(
-            name=ADMIN_GROUP
-        )
+        self.admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
         self.admin.groups.add(self.admin_group)
 
         self.warehouse_user = User.objects.create_user(
@@ -42,11 +44,9 @@ class SupplierAPITests(APITestCase):
         )
         self.warehouse_user.groups.add(self.warehouse_group)
 
-        # Use the real API endpoint paths.
         self.list_url = "/api/catalog/suppliers/"
 
     def supplier_data(self):
-        # Return valid data for creating a supplier.
         return {
             "name": "ABC Electronics",
             "email": "abc@example.com",
@@ -55,7 +55,6 @@ class SupplierAPITests(APITestCase):
         }
 
     def test_admin_can_create_supplier(self):
-        # Authenticate as an administrator.
         self.client.force_authenticate(user=self.admin)
 
         response = self.client.post(
@@ -64,21 +63,16 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_201_CREATED,
-        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(
             Supplier.objects.filter(email="abc@example.com").exists()
         )
 
     def test_warehouse_staff_can_list_suppliers(self):
-        # Create a supplier to appear in the list.
         Supplier.objects.create(
             name="ABC Electronics",
             email="abc@example.com",
         )
-
         self.client.force_authenticate(user=self.warehouse_user)
 
         response = self.client.get(self.list_url)
@@ -87,7 +81,6 @@ class SupplierAPITests(APITestCase):
         self.assertEqual(len(response.data), 1)
 
     def test_warehouse_staff_cannot_create_supplier(self):
-        # Only administrators can create suppliers.
         self.client.force_authenticate(user=self.warehouse_user)
 
         response = self.client.post(
@@ -96,14 +89,10 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_403_FORBIDDEN,
-        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(Supplier.objects.count(), 0)
 
     def test_anonymous_user_cannot_list_suppliers(self):
-        # Authentication is required for the supplier API.
         response = self.client.get(self.list_url)
 
         self.assertEqual(
@@ -112,7 +101,6 @@ class SupplierAPITests(APITestCase):
         )
 
     def test_admin_can_update_supplier(self):
-        # Create an existing supplier.
         supplier = Supplier.objects.create(
             name="ABC Electronics",
             email="abc@example.com",
@@ -126,26 +114,19 @@ class SupplierAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-
         supplier.refresh_from_db()
         self.assertEqual(supplier.phone, "+91 9999999999")
 
     def test_admin_can_delete_supplier(self):
-        # Administrators can delete supplier records.
         supplier = Supplier.objects.create(
             name="ABC Electronics",
             email="abc@example.com",
         )
         self.client.force_authenticate(user=self.admin)
 
-        response = self.client.delete(
-            f"{self.list_url}{supplier.pk}/"
-        )
+        response = self.client.delete(f"{self.list_url}{supplier.pk}/")
 
-        self.assertEqual(
-            response.status_code,
-            status.HTTP_204_NO_CONTENT,
-        )
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(
             Supplier.objects.filter(pk=supplier.pk).exists()
         )
@@ -153,7 +134,6 @@ class SupplierAPITests(APITestCase):
 
 class ProductAPITests(APITestCase):
     def setUp(self):
-        # Create an administrator and assign the Admin role.
         self.admin = User.objects.create_user(
             username="productadmin",
             password="StrongPass!927",
@@ -161,7 +141,6 @@ class ProductAPITests(APITestCase):
         admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
         self.admin.groups.add(admin_group)
 
-        # Create a warehouse staff user.
         self.warehouse_user = User.objects.create_user(
             username="productwarehouse",
             password="StrongPass!927",
@@ -171,16 +150,13 @@ class ProductAPITests(APITestCase):
         )
         self.warehouse_user.groups.add(warehouse_group)
 
-        # Every product must reference an existing supplier.
         self.supplier = Supplier.objects.create(
             name="ABC Electronics",
-            email="abc@example.com",
+            email="product-supplier@example.com",
         )
-
         self.list_url = "/api/catalog/products/"
 
     def product_data(self, **overrides):
-        # Return valid product data; individual tests can override fields.
         data = {
             "sku": "KB-LOG-001",
             "name": "Logitech Keyboard",
@@ -288,7 +264,6 @@ class ProductAPITests(APITestCase):
 
 class WarehouseAPITests(APITestCase):
     def setUp(self):
-        # Create an administrator and assign the Admin group.
         self.admin = User.objects.create_user(
             username="warehouseadmin",
             password="StrongPass!927",
@@ -296,7 +271,6 @@ class WarehouseAPITests(APITestCase):
         admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
         self.admin.groups.add(admin_group)
 
-        # Create a warehouse staff user.
         self.warehouse_user = User.objects.create_user(
             username="warehouseoperator",
             password="StrongPass!927",
@@ -394,19 +368,17 @@ class WarehouseAPITests(APITestCase):
             Warehouse.objects.filter(pk=warehouse.pk).exists()
         )
 
+
 class StockMovementModelTests(APITestCase):
     def setUp(self):
-        # Create a user responsible for recording stock changes.
         self.user = User.objects.create_user(
             username="stock_admin",
             password="TestPass123!",
         )
-
         self.supplier = Supplier.objects.create(
             name="Test Supplier",
-            email="supplier@example.com",
+            email="stock-model-supplier@example.com",
         )
-
         self.product = Product.objects.create(
             sku="TEST-001",
             name="Test Keyboard",
@@ -414,7 +386,6 @@ class StockMovementModelTests(APITestCase):
             cost_price="500.00",
             selling_price="750.00",
         )
-
         self.warehouse = Warehouse.objects.create(
             name="Hyderabad Warehouse",
             code="HYD-001",
@@ -456,12 +427,10 @@ class StockMovementServiceTests(APITestCase):
             username="movement_admin",
             password="TestPass123!",
         )
-
         self.supplier = Supplier.objects.create(
             name="Service Supplier",
-            email="service@example.com",
+            email="movement-service-supplier@example.com",
         )
-
         self.product = Product.objects.create(
             sku="SERVICE-001",
             name="Service Keyboard",
@@ -469,17 +438,73 @@ class StockMovementServiceTests(APITestCase):
             cost_price="500.00",
             selling_price="750.00",
         )
-
         self.warehouse = Warehouse.objects.create(
             name="Service Warehouse",
             code="SERVICE-001",
         )
-
         self.inventory = Inventory.objects.create(
             product=self.product,
             warehouse=self.warehouse,
             quantity=100,
         )
+
+    def test_stock_cannot_become_negative(self):
+            self.inventory.quantity = 100
+            self.inventory.reserved_quantity = 0
+            self.inventory.save()
+    
+            with self.assertRaises(ValidationError):
+                record_stock_movement(
+                    product=self.product,
+                    warehouse=self.warehouse,
+                    quantity=-120,
+                    movement_type=StockMovement.MovementType.ISSUE,
+                    created_by=self.user,
+                    reason="Attempted issue exceeding stock",
+                )
+    
+            self.inventory.refresh_from_db()
+    
+            self.assertEqual(self.inventory.quantity, 100)
+            self.assertEqual(self.inventory.reserved_quantity, 0)
+            self.assertEqual(StockMovement.objects.count(), 0)
+    
+        
+    def test_cannot_receive_stock_for_inactive_product(self):
+        self.product.is_active = False
+        self.product.save()
+    
+        with self.assertRaises(ValidationError):
+            record_stock_movement(
+                product=self.product,
+                warehouse=self.warehouse,
+                quantity=10,
+                movement_type=StockMovement.MovementType.RECEIPT,
+                created_by=self.user,
+                reason="Inactive product test",
+            )
+            
+            self.inventory.refresh_from_db()
+            self.assertEqual(self.inventory.quantity, 100)
+            self.assertEqual(StockMovement.objects.count(), 0)
+    
+    def test_cannot_receive_stock_into_inactive_warehouse(self):
+        self.warehouse.is_active = False
+        self.warehouse.save()
+    
+        with self.assertRaises(ValidationError):
+            record_stock_movement(
+                product=self.product,
+                warehouse=self.warehouse,
+                quantity=10,
+                movement_type=StockMovement.MovementType.RECEIPT,
+                created_by=self.user,
+                reason="Inactive warehouse test",
+            )
+    
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(StockMovement.objects.count(), 0)
 
     def test_receipt_increases_stock(self):
         record_stock_movement(
@@ -539,9 +564,7 @@ class StockMovementServiceTests(APITestCase):
         self.assertEqual(self.inventory.quantity, 100)
         self.assertEqual(StockMovement.objects.count(), 0)
 
-
     def test_reserve_available_stock(self):
-        # Reserving stock must not reduce the physical quantity.
         self.inventory.quantity = 10
         self.inventory.reserved_quantity = 2
         self.inventory.save()
@@ -557,7 +580,6 @@ class StockMovementServiceTests(APITestCase):
         self.assertEqual(self.inventory.reserved_quantity, 5)
 
     def test_reservation_larger_than_available_stock_is_rejected(self):
-        # Only two units are available: 10 physical minus 8 reserved.
         self.inventory.quantity = 10
         self.inventory.reserved_quantity = 8
         self.inventory.save()
@@ -574,8 +596,6 @@ class StockMovementServiceTests(APITestCase):
         self.assertEqual(self.inventory.reserved_quantity, 8)
 
     def test_release_reserved_stock(self):
-        # Releasing a reservation makes stock available without changing
-        # the physical quantity in the warehouse.
         self.inventory.quantity = 10
         self.inventory.reserved_quantity = 5
         self.inventory.save()
@@ -606,12 +626,30 @@ class StockMovementServiceTests(APITestCase):
         self.assertEqual(self.inventory.quantity, 10)
         self.assertEqual(self.inventory.reserved_quantity, 2)
 
+    
+    def test_inventory_update_rolls_back_if_movement_creation_fails(self):
+        with patch(
+            "apps.catalog.services.StockMovement.objects.create",
+            side_effect=RuntimeError("Simulated database failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                record_stock_movement(
+                    product=self.product,
+                    warehouse=self.warehouse,
+                    quantity=10,
+                    movement_type=StockMovement.MovementType.RECEIPT,
+                    created_by=self.user,
+                    reason="Rollback test",
+                )
+
+        self.inventory.refresh_from_db()
+
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
 
 class StockMovementAPITests(APITestCase):
     def setUp(self):
-        from django.contrib.auth.models import Group
-        from rest_framework_simplejwt.tokens import RefreshToken
-
         self.admin = User.objects.create_user(
             username="movement_api_admin",
             password="TestPass123!",
@@ -630,7 +668,7 @@ class StockMovementAPITests(APITestCase):
 
         self.supplier = Supplier.objects.create(
             name="API Supplier",
-            email="api-supplier@example.com",
+            email="stock-api-supplier@example.com",
         )
         self.product = Product.objects.create(
             sku="API-STOCK-001",
@@ -648,7 +686,6 @@ class StockMovementAPITests(APITestCase):
             warehouse=self.warehouse,
             quantity=100,
         )
-
         self.url = "/api/catalog/stock-movements/"
 
     def test_admin_can_record_receipt(self):
@@ -666,15 +703,11 @@ class StockMovementAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
-
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.quantity, 150)
         self.assertEqual(StockMovement.objects.count(), 1)
-        self.assertEqual(
-            StockMovement.objects.get().created_by,
-            self.admin,
-        )
+        self.assertEqual(StockMovement.objects.get().created_by, self.admin)
 
     def test_warehouse_staff_can_record_issue(self):
         self.client.force_authenticate(user=self.warehouse_user)
@@ -691,8 +724,7 @@ class StockMovementAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 201)
-
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.quantity, 80)
 
@@ -707,7 +739,7 @@ class StockMovementAPITests(APITestCase):
         self.client.force_authenticate(user=sales_user)
         response = self.client.get(self.url)
 
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_zero_quantity_is_rejected_by_api(self):
         self.client.force_authenticate(user=self.admin)
@@ -723,28 +755,34 @@ class StockMovementAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.inventory.refresh_from_db()
         self.assertEqual(self.inventory.quantity, 100)
         self.assertEqual(StockMovement.objects.count(), 0)
 
     def test_anonymous_user_cannot_list_movements(self):
         response = self.client.get(self.url)
-        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
 
 
 class WarehouseTransferServiceTests(APITestCase):
     def setUp(self):
-        self.user = get_user_model().objects.create_user(
+        self.user = User.objects.create_user(
             username="transfer_test_user",
             password="test-password-123",
         )
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP
+        )
+        self.user.groups.add(warehouse_group)
 
         self.supplier = Supplier.objects.create(
             name="Transfer Supplier",
-            email="transfer@example.com",
+            email="transfer-supplier@example.com",
         )
-
         self.product = Product.objects.create(
             sku="TRANSFER-001",
             name="Transfer Product",
@@ -752,102 +790,144 @@ class WarehouseTransferServiceTests(APITestCase):
             cost_price="10.00",
             selling_price="15.00",
         )
-
         self.source = Warehouse.objects.create(
             name="Source Warehouse",
             code="SRC",
             address="Source address",
         )
-
         self.destination = Warehouse.objects.create(
             name="Destination Warehouse",
             code="DST",
             address="Destination address",
         )
-
         self.source_inventory = Inventory.objects.create(
             product=self.product,
             warehouse=self.source,
             quantity=20,
             reserved_quantity=5,
         )
-
         self.destination_inventory = Inventory.objects.create(
             product=self.product,
             warehouse=self.destination,
             quantity=10,
         )
 
-    def test_transfer_moves_stock_and_creates_two_movements(self):
-        movements = transfer_stock(
+
+class InventoryAPITests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="inventory_test_user",
+            password="StrongPass!927",
+        )
+        self.warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP,
+        )
+        self.user.groups.add(self.warehouse_group)
+
+        self.supplier = Supplier.objects.create(
+            name="Inventory Test Supplier",
+            email="inventory-test@example.com",
+        )
+        self.product = Product.objects.create(
+            sku="INV-TEST-001",
+            name="Inventory Test Product",
+            supplier=self.supplier,
+            cost_price="50.00",
+            selling_price="75.00",
+        )
+        self.warehouse = Warehouse.objects.create(
+            name="Inventory Test Warehouse",
+            code="INV-WH-01",
+            address="Test Address",
+        )
+        self.inventory = Inventory.objects.create(
             product=self.product,
-            source_warehouse=self.source,
-            destination_warehouse=self.destination,
-            quantity=8,
-            created_by=self.user,
-            reason="Warehouse replenishment",
+            warehouse=self.warehouse,
+            quantity=100,
+            reserved_quantity=10,
+        )
+        self.client.force_authenticate(user=self.user)
+
+    def test_create_inventory_cannot_set_quantity_directly(self):
+        another_product = Product.objects.create(
+            sku="INV-TEST-002",
+            name="Second Inventory Test Product",
+            supplier=self.supplier,
+            cost_price="30.00",
+            selling_price="45.00",
         )
 
-        self.source_inventory.refresh_from_db()
-        self.destination_inventory.refresh_from_db()
+        response = self.client.post(
+            "/api/catalog/inventory/",
+            {
+                "product": another_product.id,
+                "warehouse": self.warehouse.id,
+                "quantity": 500,
+            },
+            format="json",
+        )
 
-        self.assertEqual(self.source_inventory.quantity, 12)
-        self.assertEqual(self.source_inventory.reserved_quantity, 5)
-        self.assertEqual(self.destination_inventory.quantity, 18)
-
-        self.assertEqual(len(movements), 2)
         self.assertEqual(
-            StockMovement.objects.filter(
-                movement_type=StockMovement.MovementType.TRANSFER_OUT,
-                quantity=-8,
-            ).count(),
-            1,
+            response.status_code,
+            status.HTTP_201_CREATED,
+            response.data,
         )
-        self.assertEqual(
-            StockMovement.objects.filter(
-                movement_type=StockMovement.MovementType.TRANSFER_IN,
-                quantity=8,
-            ).count(),
-            1,
+        inventory = Inventory.objects.get(
+            product=another_product,
+            warehouse=self.warehouse,
+        )
+        self.assertEqual(inventory.quantity, 0)
+
+    def test_update_inventory_cannot_change_quantity(self):
+        response = self.client.patch(
+            f"/api/catalog/inventory/{self.inventory.id}/",
+            {"quantity": 500},
+            format="json",
         )
 
-    def test_transfer_rejects_insufficient_available_stock(self):
-        with self.assertRaises(ValidationError):
-            transfer_stock(
-                product=self.product,
-                source_warehouse=self.source,
-                destination_warehouse=self.destination,
-                quantity=16,
-                created_by=self.user,
-            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(self.inventory.reserved_quantity, 10)
 
-        self.source_inventory.refresh_from_db()
-        self.destination_inventory.refresh_from_db()
+    def test_low_stock_when_available_quantity_is_below_reorder_level(self):
+        self.inventory.quantity = 20
+        self.inventory.reserved_quantity = 12
+        self.inventory.reorder_level = 10
+        self.inventory.save()
 
-        self.assertEqual(self.source_inventory.quantity, 20)
-        self.assertEqual(self.destination_inventory.quantity, 10)
-        self.assertEqual(StockMovement.objects.count(), 0)
+        response = self.client.get(
+            f"/api/catalog/inventory/{self.inventory.id}/"
+        )
 
-    def test_transfer_rejects_same_warehouse(self):
-        with self.assertRaises(ValidationError):
-            transfer_stock(
-                product=self.product,
-                source_warehouse=self.source,
-                destination_warehouse=self.source,
-                quantity=1,
-                created_by=self.user,
-            )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["available_quantity"], 8)
+        self.assertTrue(response.data["is_low_stock"])
 
-        self.assertEqual(StockMovement.objects.count(), 0)
+    def test_low_stock_when_available_quantity_equals_reorder_level(self):
+        self.inventory.quantity = 20
+        self.inventory.reserved_quantity = 10
+        self.inventory.reorder_level = 10
+        self.inventory.save()
 
-    def test_transfer_rejects_non_positive_quantity(self):
-        with self.assertRaises(ValidationError):
-            transfer_stock(
-                product=self.product,
-                source_warehouse=self.source,
-                destination_warehouse=self.destination,
-                quantity=0,
-                created_by=self.user,
-            )
+        response = self.client.get(
+            f"/api/catalog/inventory/{self.inventory.id}/"
+        )
 
-        self.assertEqual(StockMovement.objects.count(), 0)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["available_quantity"], 10)
+        self.assertTrue(response.data["is_low_stock"])
+
+    def test_not_low_stock_when_available_quantity_exceeds_reorder_level(self):
+        self.inventory.quantity = 20
+        self.inventory.reserved_quantity = 9
+        self.inventory.reorder_level = 10
+        self.inventory.save()
+
+        response = self.client.get(
+            f"/api/catalog/inventory/{self.inventory.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["available_quantity"], 11)
+        self.assertFalse(response.data["is_low_stock"])
