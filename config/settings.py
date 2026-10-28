@@ -51,8 +51,10 @@ INSTALLED_APPS = [
     'rest_framework',
 
     # Local apps
-    'apps.core',
+    "apps.core.apps.CoreConfig",
 ]
+
+AUTH_USER_MODEL = "core.User"
 
 REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
