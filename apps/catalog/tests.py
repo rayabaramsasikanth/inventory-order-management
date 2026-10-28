@@ -15,6 +15,8 @@ from apps.catalog.models import Supplier, Product, Warehouse, Inventory, StockMo
 from apps.core.models import User
 from apps.core.permissions import ADMIN_GROUP, WAREHOUSE_GROUP
 
+from apps.catalog.services import transfer_stock
+
 
 User = get_user_model()
 
@@ -729,3 +731,123 @@ class StockMovementAPITests(APITestCase):
     def test_anonymous_user_cannot_list_movements(self):
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 401)
+
+
+class WarehouseTransferServiceTests(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="transfer_test_user",
+            password="test-password-123",
+        )
+
+        self.supplier = Supplier.objects.create(
+            name="Transfer Supplier",
+            email="transfer@example.com",
+        )
+
+        self.product = Product.objects.create(
+            sku="TRANSFER-001",
+            name="Transfer Product",
+            supplier=self.supplier,
+            cost_price="10.00",
+            selling_price="15.00",
+        )
+
+        self.source = Warehouse.objects.create(
+            name="Source Warehouse",
+            code="SRC",
+            address="Source address",
+        )
+
+        self.destination = Warehouse.objects.create(
+            name="Destination Warehouse",
+            code="DST",
+            address="Destination address",
+        )
+
+        self.source_inventory = Inventory.objects.create(
+            product=self.product,
+            warehouse=self.source,
+            quantity=20,
+            reserved_quantity=5,
+        )
+
+        self.destination_inventory = Inventory.objects.create(
+            product=self.product,
+            warehouse=self.destination,
+            quantity=10,
+        )
+
+    def test_transfer_moves_stock_and_creates_two_movements(self):
+        movements = transfer_stock(
+            product=self.product,
+            source_warehouse=self.source,
+            destination_warehouse=self.destination,
+            quantity=8,
+            created_by=self.user,
+            reason="Warehouse replenishment",
+        )
+
+        self.source_inventory.refresh_from_db()
+        self.destination_inventory.refresh_from_db()
+
+        self.assertEqual(self.source_inventory.quantity, 12)
+        self.assertEqual(self.source_inventory.reserved_quantity, 5)
+        self.assertEqual(self.destination_inventory.quantity, 18)
+
+        self.assertEqual(len(movements), 2)
+        self.assertEqual(
+            StockMovement.objects.filter(
+                movement_type=StockMovement.MovementType.TRANSFER_OUT,
+                quantity=-8,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            StockMovement.objects.filter(
+                movement_type=StockMovement.MovementType.TRANSFER_IN,
+                quantity=8,
+            ).count(),
+            1,
+        )
+
+    def test_transfer_rejects_insufficient_available_stock(self):
+        with self.assertRaises(ValidationError):
+            transfer_stock(
+                product=self.product,
+                source_warehouse=self.source,
+                destination_warehouse=self.destination,
+                quantity=16,
+                created_by=self.user,
+            )
+
+        self.source_inventory.refresh_from_db()
+        self.destination_inventory.refresh_from_db()
+
+        self.assertEqual(self.source_inventory.quantity, 20)
+        self.assertEqual(self.destination_inventory.quantity, 10)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_transfer_rejects_same_warehouse(self):
+        with self.assertRaises(ValidationError):
+            transfer_stock(
+                product=self.product,
+                source_warehouse=self.source,
+                destination_warehouse=self.source,
+                quantity=1,
+                created_by=self.user,
+            )
+
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_transfer_rejects_non_positive_quantity(self):
+        with self.assertRaises(ValidationError):
+            transfer_stock(
+                product=self.product,
+                source_warehouse=self.source,
+                destination_warehouse=self.destination,
+                quantity=0,
+                created_by=self.user,
+            )
+
+        self.assertEqual(StockMovement.objects.count(), 0)

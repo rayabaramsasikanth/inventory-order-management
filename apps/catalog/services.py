@@ -186,3 +186,129 @@ def release_reserved_stock(*, product, warehouse, quantity):
     inventory.save(update_fields=["reserved_quantity", "updated_at"])
 
     return inventory
+
+
+@transaction.atomic
+def transfer_stock(
+    *,
+    product,
+    source_warehouse,
+    destination_warehouse,
+    quantity,
+    created_by,
+    reason="",
+):
+    """Transfer stock between warehouses as one atomic operation."""
+
+    if (
+        not isinstance(quantity, int)
+        or isinstance(quantity, bool)
+        or quantity <= 0
+    ):
+        raise ValidationError(
+            "Transfer quantity must be a positive integer."
+        )
+
+    if source_warehouse.pk == destination_warehouse.pk:
+        raise ValidationError(
+            "Source and destination warehouses must be different."
+        )
+
+    if not product.is_active:
+        raise ValidationError(
+            "Cannot transfer stock for an inactive product."
+        )
+
+    if not source_warehouse.is_active:
+        raise ValidationError(
+            "Cannot transfer stock from an inactive warehouse."
+        )
+
+    if not destination_warehouse.is_active:
+        raise ValidationError(
+            "Cannot transfer stock to an inactive warehouse."
+        )
+
+    # Lock existing inventory records in a consistent order.
+    warehouse_ids = sorted([
+        source_warehouse.pk,
+        destination_warehouse.pk,
+    ])
+
+    inventories = list(
+        Inventory.objects.select_for_update()
+        .filter(
+            product=product,
+            warehouse_id__in=warehouse_ids,
+        )
+        .order_by("warehouse_id")
+    )
+
+    inventory_by_warehouse = {
+        inventory.warehouse_id: inventory
+        for inventory in inventories
+    }
+
+    source_inventory = inventory_by_warehouse.get(
+        source_warehouse.pk
+    )
+
+    if source_inventory is None:
+        raise ValidationError(
+            "No source inventory record exists for this product."
+        )
+
+    available_quantity = (
+        source_inventory.quantity
+        - source_inventory.reserved_quantity
+    )
+
+    if available_quantity < quantity:
+        raise ValidationError(
+            f"Insufficient available stock. "
+            f"Available quantity: {available_quantity}."
+        )
+
+    destination_inventory = inventory_by_warehouse.get(
+        destination_warehouse.pk
+    )
+
+    if destination_inventory is None:
+        destination_inventory = Inventory.objects.create(
+            product=product,
+            warehouse=destination_warehouse,
+            quantity=0,
+        )
+
+    # Update both inventories within the same transaction.
+    source_inventory.quantity -= quantity
+    destination_inventory.quantity += quantity
+
+    source_inventory.save(
+        update_fields=["quantity", "updated_at"]
+    )
+    destination_inventory.save(
+        update_fields=["quantity", "updated_at"]
+    )
+
+    # Record both sides of the transfer for auditing.
+    movements = StockMovement.objects.bulk_create([
+        StockMovement(
+            product=product,
+            warehouse=source_warehouse,
+            quantity=-quantity,
+            movement_type=StockMovement.MovementType.TRANSFER_OUT,
+            reason=reason,
+            created_by=created_by,
+        ),
+        StockMovement(
+            product=product,
+            warehouse=destination_warehouse,
+            quantity=quantity,
+            movement_type=StockMovement.MovementType.TRANSFER_IN,
+            reason=reason,
+            created_by=created_by,
+        ),
+    ])
+
+    return movements
