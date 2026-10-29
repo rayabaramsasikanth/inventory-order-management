@@ -40,6 +40,12 @@ from apps.core.permissions import (
     IsWarehouseStaff,
 )
 
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiTypes,
+    extend_schema,
+    extend_schema_view,
+)
 
 class SupplierListCreateView(generics.ListCreateAPIView):
     queryset = Supplier.objects.all()
@@ -58,7 +64,33 @@ class SupplierDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = SupplierSerializer
     permission_classes = [IsBusinessAdmin]
 
-
+@extend_schema_view(
+    get=extend_schema(
+        summary="List customers",
+        description=(
+            "Returns customers with optional filtering by active status "
+            "and name search. Requires authentication."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="is_active",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description="Filter customers by active status.",
+            ),
+            OpenApiParameter(
+                name="search",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Search customers by name.",
+            ),
+        ],
+    ),
+    post=extend_schema(
+        summary="Create customer",
+        description="Creates a customer. Requires business-admin permission.",
+    ),
+)
 class CustomerListCreateView(generics.ListCreateAPIView):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
@@ -91,6 +123,60 @@ class CustomerDetailView(generics.RetrieveUpdateAPIView):
     permission_classes = [IsAuthenticated]
 
 
+@extend_schema_view(
+    get=extend_schema(
+        summary="List products",
+        description=(
+            "Returns a paginated list of products. Supports searching, "
+            "filtering by supplier and active status, and ordering."
+        ),
+        parameters=[
+            OpenApiParameter(
+                name="search",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description="Search product name, SKU, or description.",
+            ),
+            OpenApiParameter(
+                name="supplier",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Filter by supplier ID.",
+            ),
+            OpenApiParameter(
+                name="is_active",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description="Filter by active status.",
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=OpenApiTypes.STR,
+                location=OpenApiParameter.QUERY,
+                description=(
+                    "Order by name, selling_price, or created_at. "
+                    "Prefix with '-' for descending order."
+                ),
+            ),
+            OpenApiParameter(
+                name="page",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Page number.",
+            ),
+            OpenApiParameter(
+                name="page_size",
+                type=OpenApiTypes.INT,
+                location=OpenApiParameter.QUERY,
+                description="Results per page; maximum 100.",
+            ),
+        ],
+    ),
+    post=extend_schema(
+        summary="Create product",
+        description="Creates a product. Requires business-admin permission.",
+    ),
+)
 class ProductListCreateView(generics.ListCreateAPIView):
     queryset = Product.objects.select_related("supplier").all()
     serializer_class = ProductSerializer
@@ -151,7 +237,21 @@ class InventoryListCreateView(generics.ListCreateAPIView):
 
         return super().get_permissions()
 
-
+@extend_schema_view(
+    post=extend_schema(
+        summary="Reconcile inventory stock",
+        description=(
+            "Compares the physical stock count with recorded inventory "
+            "and creates an adjustment movement when a difference exists. "
+            "Requires business-admin or warehouse-staff permission."
+        ),
+        request=StockReconciliationSerializer,
+        responses={
+            200: OpenApiTypes.OBJECT,
+            201: StockMovementSerializer,
+        },
+    ),
+)
 class StockReconciliationView(generics.GenericAPIView):
     serializer_class = StockReconciliationSerializer
     permission_classes = [IsAuthenticated]
@@ -210,7 +310,25 @@ class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
 
         return super().get_permissions()
 
-
+@extend_schema_view(
+    get=extend_schema(
+        summary="List stock movements",
+        description=(
+            "Returns stock movement records, including their product, "
+            "warehouse, quantity, movement type, and creation details."
+        ),
+    ),
+    post=extend_schema(
+        summary="Record stock movement",
+        description=(
+            "Records an inventory movement. Direct transfer-in and "
+            "transfer-out movements are not permitted; use the transfer "
+            "workflow instead. Requires business-admin or warehouse-staff permission."
+        ),
+        request=StockMovementSerializer,
+        responses={201: StockMovementSerializer},
+    ),
+)
 class StockMovementListCreateView(generics.ListCreateAPIView):
     serializer_class = StockMovementSerializer
 
@@ -252,7 +370,24 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
             status=status.HTTP_201_CREATED,
         )
 
-
+@extend_schema_view(
+    get=extend_schema(
+        summary="List orders",
+        description=(
+            "Returns orders ordered by creation date, newest first. "
+            "Requires authentication."
+        ),
+    ),
+    post=extend_schema(
+        summary="Create order",
+        description=(
+            "Creates an order with its items. Requires business-admin "
+            "or sales-staff permission."
+        ),
+        request=OrderCreateSerializer,
+        responses={201: OrderReadSerializer},
+    ),
+)
 class OrderListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
@@ -276,7 +411,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
 
         return OrderReadSerializer
 
-
+@extend_schema(
+    summary="Retrieve order",
+    description="Returns an order and its items. Requires authentication.",
+    responses={200: OrderReadSerializer},
+)
 class OrderDetailView(generics.RetrieveAPIView):
     queryset = (
         Order.objects
@@ -286,7 +425,28 @@ class OrderDetailView(generics.RetrieveAPIView):
     serializer_class = OrderReadSerializer
     permission_classes = [IsAuthenticated]
 
-
+@extend_schema_view(
+    patch=extend_schema(
+        summary="Update order status",
+        description=(
+            "Updates an order's status after business-rule validation. "
+            "Requires business-admin or sales-staff permission."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "description": "The requested new order status.",
+                    }
+                },
+            }
+        },
+        responses={200: OrderReadSerializer},
+    ),
+)
 class OrderStatusUpdateView(generics.GenericAPIView):
     queryset = Order.objects.select_related(
         "customer",
@@ -320,7 +480,37 @@ class OrderStatusUpdateView(generics.GenericAPIView):
 
         return Response(self.get_serializer(updated_order).data)
 
-
+@extend_schema_view(
+    post=extend_schema(
+        summary="Fulfil order",
+        description=(
+            "Fulfils specified quantities for order items and updates "
+            "inventory through the fulfilment service. Requires "
+            "business-admin or warehouse-staff permission."
+        ),
+        request={
+            "application/json": {
+                "type": "object",
+                "required": ["quantities"],
+                "properties": {
+                    "quantities": {
+                        "type": "object",
+                        "description": (
+                            "Mapping of order item IDs to positive "
+                            "integer shipment quantities."
+                        ),
+                        "additionalProperties": {
+                            "type": "integer",
+                            "minimum": 1,
+                        },
+                        "example": {"1": 2, "2": 1},
+                    }
+                },
+            }
+        },
+        responses={200: OrderReadSerializer},
+    ),
+)
 class OrderFulfilmentView(generics.GenericAPIView):
     queryset = (
         Order.objects
