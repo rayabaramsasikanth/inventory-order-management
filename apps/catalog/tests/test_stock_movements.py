@@ -436,3 +436,53 @@ class StockMovementAPITests(APITestCase):
             response.status_code,
             status.HTTP_401_UNAUTHORIZED,
         )
+
+    def test_warehouse_staff_can_list_movements(self):
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_sales_staff_cannot_record_movement(self):
+        sales_user = User.objects.create_user(
+            username="movement_sales_create",
+            password="TestPass123!",
+        )
+        sales_group, _ = Group.objects.get_or_create(name="Sales Staff")
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.post(
+            self.url,
+            {
+                "product": self.product.id,
+                "warehouse": self.warehouse.id,
+                "quantity": 10,
+                "movement_type": "RECEIPT",
+                "reason": "Permission test",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
+    def test_anonymous_user_cannot_record_movement(self):
+        response = self.client.post(
+            self.url,
+            {
+                "product": self.product.id,
+                "warehouse": self.warehouse.id,
+                "quantity": 10,
+                "movement_type": "RECEIPT",
+                "reason": "Permission test",
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+        self.assertEqual(StockMovement.objects.count(), 0)
