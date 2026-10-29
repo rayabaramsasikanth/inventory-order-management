@@ -452,6 +452,8 @@ class OrderServiceTests(APITestCase):
             created_by=self.user,
         )
 
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.user.groups.add(sales_group)
         self.client.force_authenticate(user=self.user)
 
         response = self.client.get(
@@ -786,3 +788,81 @@ class OrderServiceTests(APITestCase):
                 reason=f"Order fulfilment: {order.order_number}"
             ).exists()
         )
+
+
+class OrderReadPermissionTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="order_read_user",
+            password="StrongPass!927",
+        )
+
+        self.sales_group, _ = Group.objects.get_or_create(
+            name=SALES_GROUP,
+        )
+        self.admin_group, _ = Group.objects.get_or_create(
+            name=ADMIN_GROUP,
+        )
+
+        supplier = Supplier.objects.create(
+            name="Read Test Supplier",
+            email="read-test@example.com",
+        )
+        product = Product.objects.create(
+            sku="READ-001",
+            name="Read Test Product",
+            supplier=supplier,
+            cost_price="50.00",
+            selling_price="75.00",
+        )
+        warehouse = Warehouse.objects.create(
+            name="Read Test Warehouse",
+            code="READ-WH",
+        )
+        Inventory.objects.create(
+            product=product,
+            warehouse=warehouse,
+            quantity=20,
+        )
+
+        self.order = create_order(
+            order_number="ORD-READ-001",
+            warehouse=warehouse,
+            created_by=self.user,
+            items=[{"product": product, "quantity": 2}],
+        )
+
+    def test_user_without_sales_or_admin_role_cannot_list_orders(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(reverse("order-list-create"))
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_user_without_sales_or_admin_role_cannot_retrieve_order(self):
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.get(
+            reverse("order-detail", kwargs={"pk": self.order.pk}),
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_sales_staff_can_list_and_retrieve_orders(self):
+        self.user.groups.add(self.sales_group)
+        self.client.force_authenticate(user=self.user)
+
+        list_response = self.client.get(reverse("order-list-create"))
+        detail_response = self.client.get(
+            reverse("order-detail", kwargs={"pk": self.order.pk}),
+        )
+
+        self.assertEqual(list_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data["id"], self.order.pk)

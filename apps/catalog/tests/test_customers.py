@@ -159,3 +159,37 @@ class CustomerAPITests(APITestCase):
             response.data["results"][0]["name"],
             "Beta Stores",
         )
+
+
+    def test_regular_user_cannot_update_customer(self):
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{self.customer_one.pk}/",
+            {"name": "Unauthorized Update"},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.customer_one.refresh_from_db()
+        self.assertEqual(self.customer_one.name, "Alpha Stores")
+
+    def test_sales_staff_can_update_customer(self):
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.regular_user.groups.add(sales_group)
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{self.customer_one.pk}/",
+            {"name": "Updated Alpha Stores"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.customer_one.refresh_from_db()
+        self.assertEqual(self.customer_one.name, "Updated Alpha Stores")

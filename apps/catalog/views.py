@@ -122,6 +122,12 @@ class CustomerDetailView(generics.RetrieveUpdateAPIView):
     serializer_class = CustomerSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [(IsBusinessAdmin | IsSalesStaff)()]
+
+        return super().get_permissions()
+
 
 @extend_schema_view(
     get=extend_schema(
@@ -400,6 +406,9 @@ class OrderListCreateView(generics.ListCreateAPIView):
         )
 
     def get_permissions(self):
+        if self.request.method in ("GET", "HEAD"):
+            return [(IsBusinessAdmin | IsSalesStaff)()]
+
         if self.request.method == "POST":
             return [(IsBusinessAdmin | IsSalesStaff)()]
 
@@ -423,7 +432,9 @@ class OrderDetailView(generics.RetrieveAPIView):
         .prefetch_related("items__product")
     )
     serializer_class = OrderReadSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [
+        IsAuthenticated & (IsBusinessAdmin | IsSalesStaff)
+    ]
 
 @extend_schema_view(
     patch=extend_schema(
