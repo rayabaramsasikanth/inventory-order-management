@@ -193,3 +193,79 @@ class CustomerAPITests(APITestCase):
 
         self.customer_one.refresh_from_db()
         self.assertEqual(self.customer_one.name, "Updated Alpha Stores")
+
+
+    def test_sales_staff_cannot_create_customer(self):
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.regular_user.groups.add(sales_group)
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.post(
+            self.list_url,
+            {
+                "name": "Sales Created Customer",
+                "email": "sales-created@example.com",
+                "phone": "9876543212",
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(
+            Customer.objects.filter(
+                name="Sales Created Customer"
+            ).exists()
+        )
+
+    def test_warehouse_staff_cannot_create_customer(self):
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP
+        )
+        self.regular_user.groups.add(warehouse_group)
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.post(
+            self.list_url,
+            {
+                "name": "Warehouse Created Customer",
+                "email": "warehouse-created@example.com",
+                "phone": "9876543213",
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(
+            Customer.objects.filter(
+                name="Warehouse Created Customer"
+            ).exists()
+        )
+
+    def test_warehouse_staff_cannot_update_customer(self):
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP
+        )
+        self.regular_user.groups.add(warehouse_group)
+        self.client.force_authenticate(user=self.regular_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{self.customer_one.pk}/",
+            {"name": "Unauthorized Warehouse Update"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.customer_one.refresh_from_db()
+        self.assertEqual(self.customer_one.name, "Alpha Stores")
+
+    def test_anonymous_user_cannot_retrieve_customer(self):
+        response = self.client.get(
+            f"{self.list_url}{self.customer_one.pk}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
