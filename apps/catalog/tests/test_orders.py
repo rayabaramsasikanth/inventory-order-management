@@ -866,3 +866,63 @@ class OrderReadPermissionTests(APITestCase):
         self.assertEqual(list_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data["id"], self.order.pk)
+
+    def test_warehouse_staff_cannot_create_order(self):
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP,
+        )
+        self.user.groups.add(warehouse_group)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse("order-list-create"),
+            {
+                "order_number": "ORD-FORBIDDEN-CREATE",
+                "warehouse": self.order.warehouse_id,
+                "items": [
+                    {
+                        "product": self.order.items.first().product_id,
+                        "quantity": 1,
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertFalse(
+            Order.objects.filter(
+                order_number="ORD-FORBIDDEN-CREATE",
+            ).exists()
+        )
+
+    def test_sales_staff_cannot_fulfil_order(self):
+        self.user.groups.add(self.sales_group)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.post(
+            reverse(
+                "order-fulfilment",
+                kwargs={"pk": self.order.pk},
+            ),
+            {
+                "quantities": {
+                    str(self.order.items.first().pk): 1,
+                }
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.order.refresh_from_db()
+        self.assertEqual(
+            self.order.status,
+            Order.Status.PENDING,
+        )
