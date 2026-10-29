@@ -276,6 +276,53 @@ class InventoryAPITests(APITestCase):
         )
         self.client.force_authenticate(user=self.user)
 
+
+    def test_warehouse_staff_can_list_inventory(self):
+        response = self.client.get("/api/catalog/inventory/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_warehouse_staff_can_retrieve_inventory(self):
+        response = self.client.get(
+            f"/api/catalog/inventory/{self.inventory.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_sales_staff_cannot_create_inventory(self):
+        sales_user = User.objects.create_user(
+            username="inventory_sales_user",
+            password="StrongPass!927",
+        )
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.post(
+            "/api/catalog/inventory/",
+            {
+                "product": self.product.id,
+                "warehouse": self.warehouse.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(Inventory.objects.count(), 1)
+
+    def test_anonymous_user_cannot_list_inventory(self):
+        self.client.force_authenticate(user=None)
+
+        response = self.client.get("/api/catalog/inventory/")
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
     def test_create_inventory_cannot_set_quantity_directly(self):
         another_product = Product.objects.create(
             sku="INV-TEST-002",
@@ -359,3 +406,77 @@ class InventoryAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["available_quantity"], 11)
         self.assertFalse(response.data["is_low_stock"])
+
+
+    def test_admin_can_create_inventory(self):
+        admin = User.objects.create_user(
+            username="inventory_admin_user",
+            password="StrongPass!927",
+        )
+        admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        admin.groups.add(admin_group)
+        self.client.force_authenticate(user=admin)
+
+        another_product = Product.objects.create(
+            sku="INV-ADMIN-001",
+            name="Admin Inventory Product",
+            supplier=self.supplier,
+            cost_price="25.00",
+            selling_price="40.00",
+        )
+
+        response = self.client.post(
+            "/api/catalog/inventory/",
+            {
+                "product": another_product.id,
+                "warehouse": self.warehouse.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+            response.data,
+        )
+
+    def test_sales_staff_cannot_update_inventory(self):
+        sales_user = User.objects.create_user(
+            username="inventory_sales_update",
+            password="StrongPass!927",
+        )
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.patch(
+            f"/api/catalog/inventory/{self.inventory.id}/",
+            {"reorder_level": 20},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_sales_staff_cannot_delete_inventory(self):
+        sales_user = User.objects.create_user(
+            username="inventory_sales_delete",
+            password="StrongPass!927",
+        )
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.delete(
+            f"/api/catalog/inventory/{self.inventory.id}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertTrue(
+            Inventory.objects.filter(pk=self.inventory.id).exists()
+        )
