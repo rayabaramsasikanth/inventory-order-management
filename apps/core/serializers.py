@@ -37,3 +37,28 @@ class RegisterSerializer(serializers.ModelSerializer):
         # create_user() hashes the password before storing it.
         # Never use User.objects.create() with a raw password here.
         return User.objects.create_user(**validated_data)
+
+class HealthCheckSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    service = serializers.CharField()
+
+
+class RegisterResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    email = serializers.EmailField()
+    message = serializers.CharField()
+
+
+class LogoutRequestSerializer(serializers.Serializer):
+    refresh = serializers.CharField()
+
+
+class MessageResponseSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class ProfileResponseSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    email = serializers.EmailField()

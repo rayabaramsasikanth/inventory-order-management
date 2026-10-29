@@ -14,6 +14,8 @@ from apps.catalog.models import (
     Warehouse,
 )
 
+from drf_spectacular.utils import extend_schema_field
+
 
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
@@ -126,9 +128,11 @@ class InventorySerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
 
+    @extend_schema_field(serializers.IntegerField())
     def get_available_quantity(self, obj):
         return obj.quantity - obj.reserved_quantity
 
+    @extend_schema_field(serializers.BooleanField())
     def get_is_low_stock(self, obj):
         return self.get_available_quantity(obj) <= obj.reorder_level
 

@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "django_filters",
     "rest_framework_simplejwt.token_blacklist",
+    "drf_spectacular",
 
     # Local apps
     "apps.core.apps.CoreConfig",
@@ -64,6 +65,8 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_PAGINATION_CLASS": "apps.catalog.pagination.StandardResultsSetPagination",
     "PAGE_SIZE": 20,
+
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
 
     "DEFAULT_VERSIONING_CLASS": (
         "rest_framework.versioning.URLPathVersioning"
