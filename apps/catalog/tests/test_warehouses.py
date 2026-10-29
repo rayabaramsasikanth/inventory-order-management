@@ -144,3 +144,58 @@ class WarehouseAPITests(APITestCase):
         self.assertFalse(
             Warehouse.objects.filter(pk=warehouse.pk).exists()
         )
+
+    def test_warehouse_staff_cannot_retrieve_warehouse(self):
+        warehouse = Warehouse.objects.create(
+            name="Restricted Warehouse",
+            code="HYD-002",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.get(
+            f"{self.list_url}{warehouse.pk}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_warehouse_staff_cannot_update_warehouse(self):
+        warehouse = Warehouse.objects.create(
+            name="Restricted Warehouse",
+            code="HYD-003",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{warehouse.pk}/",
+            {"name": "Changed Warehouse"},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        warehouse.refresh_from_db()
+        self.assertEqual(warehouse.name, "Restricted Warehouse")
+
+    def test_warehouse_staff_cannot_delete_warehouse(self):
+        warehouse = Warehouse.objects.create(
+            name="Restricted Warehouse",
+            code="HYD-004",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.delete(
+            f"{self.list_url}{warehouse.pk}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertTrue(
+            Warehouse.objects.filter(pk=warehouse.pk).exists()
+        )
