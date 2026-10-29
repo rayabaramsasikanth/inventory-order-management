@@ -170,6 +170,77 @@ class ProductAPITests(APITestCase):
         product.refresh_from_db()
         self.assertEqual(str(product.selling_price), "1699.00")
 
+    def test_anonymous_user_cannot_list_products(self):
+        response = self.client.get(self.list_url)
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_401_UNAUTHORIZED,
+        )
+
+    def test_warehouse_staff_cannot_retrieve_product(self):
+        product = Product.objects.create(
+            sku="RBAC-RETRIEVE-001",
+            name="Restricted Product",
+            supplier=self.supplier,
+            cost_price="100.00",
+            selling_price="150.00",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.get(
+            f"{self.list_url}{product.pk}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_warehouse_staff_cannot_update_product(self):
+        product = Product.objects.create(
+            sku="RBAC-UPDATE-001",
+            name="Restricted Product",
+            supplier=self.supplier,
+            cost_price="100.00",
+            selling_price="150.00",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{product.pk}/",
+            {"name": "Changed Product"},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        product.refresh_from_db()
+        self.assertEqual(product.name, "Restricted Product")
+
+    def test_warehouse_staff_cannot_delete_product(self):
+        product = Product.objects.create(
+            sku="RBAC-DELETE-001",
+            name="Restricted Product",
+            supplier=self.supplier,
+            cost_price="100.00",
+            selling_price="150.00",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.delete(
+            f"{self.list_url}{product.pk}/"
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertTrue(
+            Product.objects.filter(pk=product.pk).exists()
+        )
 
     def test_product_search_by_name(self):
         Product.objects.create(
