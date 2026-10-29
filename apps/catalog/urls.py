@@ -2,15 +2,23 @@
 from django.urls import path
 
 from apps.catalog.views import (
-    SupplierListCreateView,
-    SupplierDetailView,
-    ProductListCreateView,
+    CustomerDetailView,
+    CustomerListCreateView,
+    InventoryDetailView,
+    InventoryListCreateView,
+    OrderDetailView,
+    OrderFulfilmentView,
+    OrderListCreateView,
+    OrderStatusUpdateView,
     ProductDetailView,
+    ProductListCreateView,
+    StockMovementListCreateView,
+    StockReconciliationView,
+    SupplierDetailView,
+    SupplierListCreateView,
     WarehouseDetailView,
     WarehouseListCreateView,
-    InventoryListCreateView,
-    InventoryDetailView,
-    StockMovementListCreateView,
+    OrderFulfilmentView,
 )
 
 urlpatterns = [
@@ -19,19 +27,19 @@ urlpatterns = [
         SupplierListCreateView.as_view(),
         name="supplier-list-create",
     ),
-    
+
     path(
         "suppliers/<int:pk>/",
         SupplierDetailView.as_view(),
         name="supplier-detail",
     ),
-    
+
     path(
     "products/",
     ProductListCreateView.as_view(),
     name="product-list-create",
     ),
-    
+
     path(
         "products/<int:pk>/",
         ProductDetailView.as_view(),
@@ -67,5 +75,47 @@ urlpatterns = [
         "stock-movements/",
         StockMovementListCreateView.as_view(),
         name="stock-movement-list-create",
+    ),
+
+    path(
+        "orders/",
+        OrderListCreateView.as_view(),
+        name="order-list-create",
+    ),
+
+    path(
+        "orders/<int:pk>/",
+        OrderDetailView.as_view(),
+        name="order-detail",
+    ),
+
+    path(
+        "orders/<int:pk>/status/",
+        OrderStatusUpdateView.as_view(),
+        name="order-status-update",
+    ),
+
+    path(
+        "inventory/reconcile/",
+        StockReconciliationView.as_view(),
+        name="inventory-reconcile",
+    ),
+
+    path(
+        "customers/",
+        CustomerListCreateView.as_view(),
+        name="customer-list-create"
+    ),
+
+    path(
+        "customers/<int:pk>/",
+        CustomerDetailView.as_view(),
+        name="customer-detail"
+    ),
+
+    path(
+        "orders/<int:pk>/fulfil/",
+        OrderFulfilmentView.as_view(),
+        name="order-fulfilment",
     ),
 ]

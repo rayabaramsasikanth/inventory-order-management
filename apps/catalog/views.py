@@ -1,42 +1,52 @@
-from rest_framework import generics, status
-from rest_framework.exceptions import ValidationError
+
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import filters, generics, serializers, status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from rest_framework import generics
-from rest_framework.permissions import IsAuthenticated
-
 from apps.catalog.models import (
+    Customer,
+    Inventory,
+    Order,
     Product,
+    StockMovement,
     Supplier,
     Warehouse,
-    StockMovement,
-    Inventory,
 )
 from apps.catalog.serializers import (
+    CustomerSerializer,
+    InventorySerializer,
+    OrderCreateSerializer,
+    OrderReadSerializer,
     ProductSerializer,
+    StockMovementSerializer,
+    StockReconciliationSerializer,
     SupplierSerializer,
     WarehouseSerializer,
-    StockMovementSerializer,
-    InventorySerializer,
 )
 
-from apps.catalog.services import record_stock_movement
+from apps.catalog.services import (
+    fulfil_order,
+    reconcile_stock,
+    record_stock_movement,
+    update_order_status,
+)
 
 from apps.core.permissions import (
     IsAdminUser as IsBusinessAdmin,
-    IsWarehouseStaff,
     IsSalesStaff,
+    IsWarehouseStaff,
 )
 
+
 class SupplierListCreateView(generics.ListCreateAPIView):
-    # GET lists suppliers; POST creates a supplier.
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
-        # Any authenticated user can list suppliers.
-        # Only business administrators can create suppliers.
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
 
@@ -44,20 +54,59 @@ class SupplierListCreateView(generics.ListCreateAPIView):
 
 
 class SupplierDetailView(generics.RetrieveUpdateDestroyAPIView):
-    # GET, PUT, PATCH, and DELETE operate on one supplier.
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [IsBusinessAdmin]
 
 
+class CustomerListCreateView(generics.ListCreateAPIView):
+    queryset = Customer.objects.all()
+    serializer_class = CustomerSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Customer.objects.all()
+
+        # Support ?is_active=true or ?is_active=false.
+        is_active = self.request.query_params.get("is_active")
+        if is_active in {"true", "false"}:
+            queryset = queryset.filter(is_active=(is_active == "true"))
+
+        search = self.request.query_params.get("search")
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+
+        return queryset.order_by("name", "id")
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsBusinessAdmin()]
+
+        return super().get_permissions()
+
+
+class CustomerDetailView(generics.RetrieveUpdateAPIView):
+    queryset = Customer.objects.all()
+    serializer_class = CustomerSerializer
+    permission_classes = [IsAuthenticated]
+
+
 class ProductListCreateView(generics.ListCreateAPIView):
-    # Fetch product and supplier data efficiently.
     queryset = Product.objects.select_related("supplier").all()
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
 
+    filter_backends = [
+        filters.SearchFilter,
+        DjangoFilterBackend,
+        filters.OrderingFilter,
+    ]
+    search_fields = ["name", "sku", "description"]
+    filterset_fields = ["supplier", "is_active"]
+    ordering_fields = ["name", "selling_price", "created_at"]
+    ordering = ["name"]
+
     def get_permissions(self):
-        # Authenticated users can list; administrators can create.
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
 
@@ -65,20 +114,17 @@ class ProductListCreateView(generics.ListCreateAPIView):
 
 
 class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
-    # Fetch the related supplier in the same database query.
     queryset = Product.objects.select_related("supplier").all()
     serializer_class = ProductSerializer
     permission_classes = [IsBusinessAdmin]
 
 
 class WarehouseListCreateView(generics.ListCreateAPIView):
-    # Authenticated users can list warehouses.
     queryset = Warehouse.objects.all()
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
-        # Only administrators can register a warehouse.
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
 
@@ -86,14 +132,12 @@ class WarehouseListCreateView(generics.ListCreateAPIView):
 
 
 class WarehouseDetailView(generics.RetrieveUpdateDestroyAPIView):
-    # Only administrators can manage individual warehouses.
     queryset = Warehouse.objects.all()
     serializer_class = WarehouseSerializer
     permission_classes = [IsBusinessAdmin]
 
 
 class InventoryListCreateView(generics.ListCreateAPIView):
-    # Fetch related product and warehouse data efficiently.
     queryset = Inventory.objects.select_related(
         "product",
         "warehouse",
@@ -102,12 +146,54 @@ class InventoryListCreateView(generics.ListCreateAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
-        # Only administrators and warehouse staff can create stock records.
         if self.request.method == "POST":
             return [(IsBusinessAdmin | IsWarehouseStaff)()]
-        
-        # Authenticated users can list inventory.
+
         return super().get_permissions()
+
+
+class StockReconciliationView(generics.GenericAPIView):
+    serializer_class = StockReconciliationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
+
+        return super().get_permissions()
+
+    def post(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        data = serializer.validated_data
+
+        try:
+            movement = reconcile_stock(
+                product=data["product"],
+                warehouse=data["warehouse"],
+                physical_count=data["physical_count"],
+                created_by=request.user,
+                reason=data["reason"],
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                {"detail": exc.messages}
+            ) from exc
+
+        if movement is None:
+            return Response(
+                {
+                    "detail": "Physical count matches recorded stock.",
+                    "adjustment": 0,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        return Response(
+            StockMovementSerializer(movement).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -119,11 +205,9 @@ class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
-        # Only administrators and warehouse staff can change inventory.
-        if self.request.method in ["PUT", "PATCH", "DELETE"]:
+        if self.request.method in {"PUT", "PATCH", "DELETE"}:
             return [(IsBusinessAdmin | IsWarehouseStaff)()]
-        
-        # Authenticated users can retrieve an individual stock record.
+
         return super().get_permissions()
 
 
@@ -131,7 +215,6 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
     serializer_class = StockMovementSerializer
 
     def get_queryset(self):
-        # Show movement history newest first.
         return StockMovement.objects.select_related(
             "product",
             "warehouse",
@@ -139,21 +222,18 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
         ).all()
 
     def get_permissions(self):
-        # Only Admin and Warehouse Staff can access this endpoint.
-        if self.request.method in ["GET", "POST"]:
-            return [(IsBusinessAdmin | IsWarehouseStaff) ()]
+        if self.request.method in {"GET", "POST"}:
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
 
         return super().get_permissions()
 
     def create(self, request, *args, **kwargs):
-        # Validate the incoming request before changing stock.
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
 
         try:
-            # Update inventory and save the audit record together.
             movement = record_stock_movement(
                 product=data["product"],
                 warehouse=data["warehouse"],
@@ -162,13 +242,148 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
                 reason=data.get("reason", ""),
                 created_by=request.user,
             )
-        except ValidationError as exc:
-            raise ValidationError({"detail": exc.messages})
-
-        # Return the saved movement with read-only display fields.
-        response_serializer = self.get_serializer(movement)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                {"detail": exc.messages}
+            ) from exc
 
         return Response(
-            response_serializer.data,
+            self.get_serializer(movement).data,
             status=status.HTTP_201_CREATED,
+        )
+
+
+class OrderListCreateView(generics.ListCreateAPIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return (
+            Order.objects
+            .select_related("customer", "warehouse", "created_by")
+            .prefetch_related("items__product")
+            .order_by("-created_at")
+        )
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [(IsBusinessAdmin | IsSalesStaff)()]
+
+        return super().get_permissions()
+
+    def get_serializer_class(self):
+        if self.request.method == "POST":
+            return OrderCreateSerializer
+
+        return OrderReadSerializer
+
+
+class OrderDetailView(generics.RetrieveAPIView):
+    queryset = (
+        Order.objects
+        .select_related("customer", "warehouse", "created_by")
+        .prefetch_related("items__product")
+    )
+    serializer_class = OrderReadSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class OrderStatusUpdateView(generics.GenericAPIView):
+    queryset = Order.objects.select_related(
+        "customer",
+        "warehouse",
+        "created_by",
+    ).prefetch_related("items__product")
+    serializer_class = OrderReadSerializer
+    permission_classes = [
+        IsAuthenticated & (IsBusinessAdmin | IsSalesStaff)
+    ]
+
+    def patch(self, request, *args, **kwargs):
+        order = self.get_object()
+        new_status = request.data.get("status")
+
+        if not isinstance(new_status, str):
+            raise serializers.ValidationError({
+                "status": "A valid order status is required."
+            })
+
+        try:
+            updated_order = update_order_status(
+                order_id=order.pk,
+                new_status=new_status,
+                updated_by=request.user,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                {"status": exc.messages}
+            ) from exc
+
+        return Response(self.get_serializer(updated_order).data)
+
+
+class OrderFulfilmentView(generics.GenericAPIView):
+    queryset = (
+        Order.objects
+        .select_related("customer", "warehouse", "created_by")
+        .prefetch_related("items__product")
+    )
+    serializer_class = OrderReadSerializer
+    permission_classes = [
+        IsAuthenticated & (IsBusinessAdmin | IsWarehouseStaff)
+    ]
+
+    def post(self, request, *args, **kwargs):
+        order = self.get_object()
+        quantities = request.data.get("quantities")
+
+        if not isinstance(quantities, dict) or not quantities:
+            raise serializers.ValidationError({
+                "quantities": (
+                    "Provide a non-empty mapping of order item IDs "
+                    "to shipment quantities."
+                )
+            })
+
+        parsed_quantities = {}
+
+        for item_id, quantity in quantities.items():
+            try:
+                parsed_item_id = int(item_id)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({
+                    "quantities": "Order item IDs must be integers."
+                })
+
+            if str(parsed_item_id) != str(item_id) or parsed_item_id <= 0:
+                raise serializers.ValidationError({
+                    "quantities": "Order item IDs must be positive integers."
+                })
+
+            if (
+                isinstance(quantity, bool)
+                or not isinstance(quantity, int)
+                or quantity <= 0
+            ):
+                raise serializers.ValidationError({
+                    "quantities": (
+                        "Shipment quantities must be positive integers."
+                    )
+                })
+
+            parsed_quantities[parsed_item_id] = quantity
+
+        try:
+            updated_order = fulfil_order(
+                order_id=order.pk,
+                fulfilled_by=request.user,
+                quantities=parsed_quantities,
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(
+                {"detail": exc.messages}
+            ) from exc
+
+        return Response(
+            self.get_serializer(updated_order).data,
+            status=status.HTTP_200_OK,
         )

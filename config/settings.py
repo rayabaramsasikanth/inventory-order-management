@@ -43,6 +43,7 @@ INSTALLED_APPS = [
 
     # Third-party apps
     "rest_framework",
+    "django_filters",
     "rest_framework_simplejwt.token_blacklist",
 
     # Local apps
@@ -61,8 +62,16 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
-}
+    "DEFAULT_PAGINATION_CLASS": "apps.catalog.pagination.StandardResultsSetPagination",
+    "PAGE_SIZE": 20,
 
+    "DEFAULT_VERSIONING_CLASS": (
+        "rest_framework.versioning.URLPathVersioning"
+    ),
+    "DEFAULT_VERSION": "v1",
+    "ALLOWED_VERSIONS": ["v1"],
+    "VERSION_PARAM": "version",
+}
 
 # JWT configuration
 SIMPLE_JWT = {
@@ -83,6 +92,18 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+
+# Django Debug Toolbar — development only
+if DEBUG:
+    INSTALLED_APPS += ["debug_toolbar"]
+
+    MIDDLEWARE.insert(
+        1,
+        "debug_toolbar.middleware.DebugToolbarMiddleware",
+    )
+
+    INTERNAL_IPS = ["127.0.0.1"]
 
 
 # URL configuration
