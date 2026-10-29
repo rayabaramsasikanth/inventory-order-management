@@ -143,3 +143,78 @@ class SupplierAPITests(APITestCase):
         self.assertFalse(
             Supplier.objects.filter(pk=supplier.pk).exists()
         )
+
+
+    def test_sales_staff_cannot_create_supplier(self):
+        sales_user = User.objects.create_user(
+            username="salessupplier",
+            password="StrongPass!927",
+        )
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.post(
+            self.list_url,
+            self.supplier_data(),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(Supplier.objects.count(), 0)
+
+    def test_warehouse_staff_cannot_retrieve_supplier(self):
+        supplier = Supplier.objects.create(
+            name="ABC Electronics",
+            email="abc@example.com",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.get(f"{self.list_url}{supplier.pk}/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_warehouse_staff_cannot_update_supplier(self):
+        supplier = Supplier.objects.create(
+            name="ABC Electronics",
+            email="abc@example.com",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.patch(
+            f"{self.list_url}{supplier.pk}/",
+            {"phone": "+91 9999999999"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        supplier.refresh_from_db()
+        self.assertNotEqual(supplier.phone, "+91 9999999999")
+
+    def test_warehouse_staff_cannot_delete_supplier(self):
+        supplier = Supplier.objects.create(
+            name="ABC Electronics",
+            email="abc@example.com",
+        )
+        self.client.force_authenticate(user=self.warehouse_user)
+
+        response = self.client.delete(f"{self.list_url}{supplier.pk}/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertTrue(Supplier.objects.filter(pk=supplier.pk).exists())
+
+    def test_ordinary_user_cannot_create_supplier(self):
+        ordinary_user = User.objects.create_user(
+            username="ordinarysupplier",
+            password="StrongPass!927",
+        )
+        self.client.force_authenticate(user=ordinary_user)
+
+        response = self.client.post(
+            self.list_url,
+            self.supplier_data(),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(Supplier.objects.count(), 0)
