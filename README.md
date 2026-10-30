@@ -10,7 +10,7 @@ The system focuses on inventory accuracy, stock tracking, order processing, auth
 
 ### Business Workflow
 
-Supplier → Product → Warehouse → Inventory → Customer → Order → Stock Reservation → Order Fulfilment
+**Supplier → Product → Warehouse → Inventory → Customer → Order → Stock Reservation → Order Fulfilment**
 
 ## 2. Key Features
 
@@ -87,12 +87,15 @@ Supplier → Product → Warehouse → Inventory → Customer → Order → Stoc
 inventory-order-management/
 │
 ├── apps/
-│   ├── core/
 │   ├── catalog/
-│   └── users/
+│   │   ├── migrations/
+│   │   └── tests/
+│   │
+│   └── core/
+│       ├── management/
+│       └── migrations/
 │
 ├── config/
-│
 ├── .env.example
 ├── .gitignore
 ├── manage.py
@@ -343,6 +346,7 @@ GitHub: https://github.com/rayabaramsasikanth/inventory-order-management
 ---
 
 **Project:** Inventory & Order Management System
+
 **Backend:** Python, Django and Django REST Framework
 
 **Version Control:** Git and GitHub
