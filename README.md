@@ -1,149 +1,352 @@
 # Inventory & Order Management System
-A Django REST API for managing products, suppliers, warehouses, inventory, stock movements and customer orders.
 
-## Overview
-The Inventory & Order Management System helps businesses manage their product catalogue, warehouse stock and order fulfilment through REST APIs.
-It supports multiple warehouses, stock tracking, inventory operations and order processing.
+A Django REST Framework API for managing suppliers, products, warehouses, inventory, stock movements and customer orders.
 
-## Business Workflow
+## 1. Project Overview
+
+The Inventory & Order Management System provides backend APIs for businesses that purchase products from suppliers, store them in warehouses, manage stock and process customer orders.
+
+The system focuses on inventory accuracy, stock tracking, order processing, authentication and business operations.
+
+### Business Workflow
+
 **Supplier → Product → Warehouse → Inventory → Customer → Order → Stock Reservation → Order Fulfilment**
 
-## Features
-- JWT authentication and user permissions
-- Product, category and supplier management
-- Warehouse and inventory management
-- Stock receipts, issues, transfers and reconciliation
-- Customer and order management
-- Stock reservation and order fulfilment
-- Search, filtering, sorting and pagination
-- API versioning and OpenAPI documentation
-- Redis caching and Celery task configuration
+## 2. Key Features
 
-## Technology Stack
+### Authentication and Security
+- Custom user model
+- User registration and login
+- JWT access and refresh tokens
+- Refresh token rotation and blacklisting
+- Logout and password management
+- Email verification and password reset
+- Role-based permissions
+- API throttling and input validation
 
-| Category            | Technology                      |
-|---------------------|---------------------------------|
-| Language            | Python                          |
-| Backend             | Django, Django REST Framework   |
-| Database            | SQLite (local development)      |
-| Authentication      | SimpleJWT                       |
-| Filtering           | django-filter                   |
-| API Documentation   | drf-spectacular                 |
-| Caching             | Redis                           |
-| Background Tasks    | Celery                          |
-| Cloud               | AWS (planned)                   |
-| Frontend            | React (planned)                 |
+### Product and Supplier Management
+- Category management
+- Product management
+- SKU validation and normalization
+- Unit of measurement management
+- Supplier management
+- Product search and filtering
+- Pagination and API versioning
 
-## Project Structure
+### Warehouse and Inventory Management
+- Warehouse management
+- Warehouse staff assignments
+- Inventory tracking
+- Stock-in and stock-out operations
+- Stock adjustments
+- Stock transfers
+- Stock reconciliation
+- Inventory transaction history
+
+### Order Management
+- Customer management
+- Order creation and management
+- Order items
+- Stock reservation
+- Order cancellation
+- Order status history
+- Pending order expiry
+- Idempotency support
+
+### API and Background Processing
+- REST API endpoints
+- Swagger and ReDoc documentation
+- OpenAPI schema
+- Redis cache configuration
+- Celery task configuration
+- Scheduled background task definitions
+- Health-check endpoint
+
+## 3. Technology Stack
+
+| Technology | Purpose |
+|---|---|
+| Python | Backend programming |
+| Django | Web framework |
+| Django REST Framework | REST API development |
+| SimpleJWT | JWT authentication |
+| SQLite | Local development database |
+| PostgreSQL | Planned AWS RDS database |
+| django-filter | API filtering |
+| drf-spectacular | API documentation |
+| Redis | Caching and Celery broker configuration |
+| Celery | Background task processing |
+| Git | Version control |
+| GitHub | Source code management |
+| AWS | Planned cloud infrastructure |
+| Docker | Planned containerization |
+
+## 4. Project Structure
 
 ```text
 inventory-order-management/
 │
 ├── apps/
-│   ├── core/
-│   └── catalog/
+│   ├── catalog/
+│   │   ├── migrations/
+│   │   └── tests/
+│   │
+│   └── core/
+│       ├── management/
+│       └── migrations/
 │
 ├── config/
-├── manage.py
-├── requirements.txt
 ├── .env.example
 ├── .gitignore
+├── manage.py
+├── requirements.txt
 └── README.md
 ```
 
-## Installation and Setup
+Application folders may contain their own models, serializers, views, URLs, permissions, services, tasks and tests.
 
-1. Clone the repository
+## 5. Local Installation and Setup
+
+### Prerequisites
+
+- Python
+- Git
+- Visual Studio Code or another code editor
+
+### Clone the repository
+
 ```bash
-git clone <repository-url>
+git clone https://github.com/rayabaramsasikanth/inventory-order-management.git
 cd inventory-order-management
 ```
 
-**2. Create and activate a virtual environment**
+### Create a virtual environment
+
 ```bash
 python -m venv .venv
+```
+
+Activate it in Git Bash:
+
+```bash
 source .venv/Scripts/activate
 ```
 
-**3. Install dependencies**
+### Install dependencies
+
 ```bash
 pip install -r requirements.txt
 ```
 
-**4. Configure environment variables**
-Create a `.env` file using `.env.example` as a reference.
+### Configure environment variables
 
-**5. Apply migrations**
+Create a local `.env` file using `.env.example` as a reference.
+
+Configure the required Django secret key, debug setting, email settings and other environment-specific values.
+
+Do not commit `.env` or production credentials to GitHub.
+
+### Apply migrations
+
 ```bash
 python manage.py migrate
 ```
 
-**6. Start the development server**
+### Create a superuser
+
+```bash
+python manage.py createsuperuser
+```
+
+### Start the development server
+
 ```bash
 python manage.py runserver
 ```
 
-## API Documentation
+The local API server runs at:
 
-Once the development server is running:
-- Swagger UI: `/api/docs/`
-- ReDoc: `/api/redoc/`
-- OpenAPI Schema: `/api/schema/`
+`http://127.0.0.1:8000/`
 
-## Running Tests
+## 6. API Documentation
+
+After starting the development server, access:
+
+| Documentation | Endpoint |
+|---|---|
+| Swagger UI | `/api/docs/` |
+| ReDoc | `/api/redoc/` |
+| OpenAPI Schema | `/api/schema/` |
+
+The API documentation describes available endpoints, request parameters, request bodies and responses.
+
+## 7. Filtering, Searching and Pagination
+
+The API supports filtering and searching on applicable list endpoints.
+
+Common query parameter examples:
+
+```text
+?search=keyboard
+?ordering=name
+?page=2
+?page_size=20
+```
+
+Available fields and supported filters depend on the individual API endpoint. Refer to Swagger documentation for the exact parameters.
+
+## 8. Running Tests
+
+Run Django system checks:
 
 ```bash
 python manage.py check
+```
+
+Run the complete test suite:
+
+```bash
 python manage.py test
 ```
 
-## Development Roadmap
+Run tests for an individual application:
+
+```bash
+python manage.py test apps.catalog
+```
+
+### Latest Recorded Test Status
+
+- 172 tests passed.
+- 1 PostgreSQL-specific test skipped when running against SQLite.
+- Django system check passed.
+
+These are the latest recorded results, not a guarantee that every test passes after future changes.
+
+## 9. Git Branching Strategy
+
+The project follows a branch-based development workflow.
+
+| Branch | Purpose |
+|---|---|
+| `main` | Stable, release-ready code |
+| `develop` | Integration branch |
+| `feature/*` | New features |
+| `bugfix/*` | Bug fixes |
+| `release/*` | Release preparation |
+| `hotfix/*` | Urgent production fixes |
+
+Temporary branches are created when required and merged through pull requests.
+
+### Development Workflow
+
+1. Start from the `develop` branch.
+2. Create a feature or bugfix branch.
+3. Implement the assigned task.
+4. Write and run automated tests.
+5. Commit and push the changes.
+6. Create a pull request targeting `develop`.
+7. Complete code review and testing.
+8. Merge approved changes.
+9. Prepare releases from `develop` and merge approved releases into `main`.
+
+## 10. Development Roadmap
 
 ### Phase 1 — Foundation
-- Project setup, environment, Django, DRF, database configuration, Git, health API and initial tests.
-- Custom user, registration, JWT, refresh rotation, logout, password reset, email verification and account deactivation.
-- Permissions, object-level access, throttling, validation, CORS, CSRF and Redis fundamentals.
+
+- Project setup and configuration
+- Authentication and JWT
+- Password management and email verification
+- Roles and permissions
+- API security and validation
+- Health endpoint and automated tests
 
 ### Phase 2 — Business Logic
-- AWS RDS PostgreSQL, networking, migrations, constraints, connections and backups.
-- Products, categories, suppliers, SKUs, units, CRUD, search, filtering, pagination and API versioning.
-- Warehouses, stock ledger, stock-in/out, transfers, reconciliation, transactions and concurrency.
-- Customers, orders, reservations, cancellation, partial fulfilment, expiry, idempotency and order history.
+
+- Database infrastructure using AWS RDS PostgreSQL
+- Products, suppliers and categories
+- Warehouse and inventory management
+- Stock movements and reconciliation
+- Customers and order management
+- Stock reservation and order fulfilment
 
 ### Phase 3 — Asynchronous Processing
-- AWS ElastiCache, Redis caching, invalidation, stampede prevention and failure handling.
-- Celery background jobs, reports, scheduling, retries, monitoring and overlapping-job prevention.
+
+- Redis caching
+- Celery background tasks
+- Scheduled jobs
+- Low-stock reports
+- Order and revenue reports
+- Task retries and failure handling
 
 ### Phase 4 — APIs and User Interface
-- Private AWS S3 storage, uploads, IAM and presigned URLs.
-- Analytics APIs, revenue metrics, ORM aggregation and query optimization.
-- React dashboard with authentication, role-aware access, tables, charts and API error handling.
-- WebSockets for real-time updates and webhooks with signatures, replay protection and idempotency.
+
+- AWS S3 file storage
+- Analytics APIs
+- React dashboard
+- WebSockets and real-time updates
+- Webhook integrations
 
 ### Phase 5 — Integrations and Reliability
-- Supplier, shipping and notification APIs with authentication, timeouts, retries and rate limits.
-- CloudWatch monitoring, structured logs, request IDs, metrics, alarms and incident runbooks.
-- Automated, security, load and concurrency testing, query profiling and database recovery drills.
 
-### Phase 6 — Modern Development and Deployment
-- AI-assisted development, code review, test generation, Docker, WSL2 and Linux fundamentals.
-- AWS production infrastructure: EC2/ECS, ECR, ALB, HTTPS, DNS, IAM, Secrets Manager/SSM and a permission-aware inventory assistant.
-- GitHub Actions CI/CD, automated checks, staging, production, AWS OIDC, deployment approvals, health checks and rollback.
+- External API integrations
+- Monitoring and logging
+- Automated and performance testing
+- Security checks
+- Backup and recovery procedures
 
-## Current Implementation Status
+### Phase 6 — Deployment and Modern Development
 
-| Phase                                       | Status                                                            |
-|---------------------------------------------|-------------------------------------------------------------------|
-| Phase 1 — Foundation                        | Completed                                                         |
-| Phase 2 — Business Logic                    | Core application implemented; AWS RDS pending                     |
-| Phase 3 — Asynchronous Processing           | Redis and Celery configuration implemented; live services pending |
-| Phase 4 — APIs and User Interface           | Planned                                                           |
-| Phase 5 — Integrations and Reliability      | Planned                                                           |
-| Phase 6 — Modern Development and Deployment | Planned                                                           |
+- Docker containerization
+- AWS deployment using EC2 or ECS
+- Amazon ECR
+- GitHub Actions CI/CD
+- Infrastructure automation
+- Production monitoring
+- AI-assisted development and inventory assistant
 
-## Development Notes
+## 11. Current Implementation Status
+
+| Area | Status |
+|---|---|
+| Django and DRF foundation | Implemented |
+| Authentication and permissions | Implemented |
+| Product and supplier APIs | Implemented |
+| Warehouse and inventory APIs | Implemented |
+| Order management | Implemented |
+| Search, filtering and pagination | Implemented |
+| API versioning and documentation | Implemented |
+| Redis integration configuration | Implemented |
+| Celery task configuration | Implemented |
+| Local automated tests | Previously passed |
+| AWS RDS PostgreSQL | Pending |
+| Live Redis service | Pending verification |
+| Live Celery worker and scheduler | Pending verification |
+| S3 integration | Planned |
+| React dashboard | Planned |
+| WebSockets | Planned |
+| Docker deployment | Planned |
+| AWS production deployment | Planned |
+| GitHub Actions CI/CD | Planned |
+
+**Note:** Implemented application code does not necessarily mean that the corresponding external infrastructure or production service is deployed and running.
+
+## 12. Development Notes
 
 - SQLite is currently used for local development.
-- Redis and Celery are configured, but a live Redis server and Celery worker have not been deployed or verified.
-- PostgreSQL on AWS RDS and production deployment are planned.
-- Roadmap items represent planned learning and development work, not completed functionality.
+- PostgreSQL on AWS RDS is planned.
+- Redis and Celery configurations are present, but live service operation must be verified.
+- Production deployment and cloud infrastructure are not yet completed.
+- Environment variables and sensitive credentials must remain outside source control.
+
+## 13. Repository
+
+GitHub: https://github.com/rayabaramsasikanth/inventory-order-management
+
+---
+
+**Project:** Inventory & Order Management System
+
+**Backend:** Python, Django and Django REST Framework
+
+**Version Control:** Git and GitHub
