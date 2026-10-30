@@ -35,6 +35,7 @@ It supports multiple warehouses, stock tracking, inventory operations and order 
 | Frontend            | React (planned)                 |
 
 ## Project Structure
+
 ```text
 inventory-order-management/
 │
@@ -51,6 +52,7 @@ inventory-order-management/
 ```
 
 ## Installation and Setup
+
 1. Clone the repository
 ```bash
 git clone <repository-url>
@@ -82,12 +84,14 @@ python manage.py runserver
 ```
 
 ## API Documentation
+
 Once the development server is running:
 - Swagger UI: `/api/docs/`
 - ReDoc: `/api/redoc/`
 - OpenAPI Schema: `/api/schema/`
 
 ## Running Tests
+
 ```bash
 python manage.py check
 python manage.py test
@@ -127,6 +131,7 @@ python manage.py test
 - GitHub Actions CI/CD, automated checks, staging, production, AWS OIDC, deployment approvals, health checks and rollback.
 
 ## Current Implementation Status
+
 | Phase                                       | Status                                                            |
 |---------------------------------------------|-------------------------------------------------------------------|
 | Phase 1 — Foundation                        | Completed                                                         |
@@ -137,6 +142,7 @@ python manage.py test
 | Phase 6 — Modern Development and Deployment | Planned                                                           |
 
 ## Development Notes
+
 - SQLite is currently used for local development.
 - Redis and Celery are configured, but a live Redis server and Celery worker have not been deployed or verified.
 - PostgreSQL on AWS RDS and production deployment are planned.
