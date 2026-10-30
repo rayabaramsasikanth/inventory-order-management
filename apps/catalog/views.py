@@ -36,8 +36,8 @@ from apps.catalog.services import (
 
 from apps.core.permissions import (
     IsAdminUser as IsBusinessAdmin,
-    IsSalesStaff,
     IsWarehouseStaff,
+    IsSalesStaff,
 )
 
 from drf_spectacular.utils import (
@@ -202,14 +202,17 @@ class ProductListCreateView(generics.ListCreateAPIView):
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
 
-        return super().get_permissions()
+        if self.request.method in ("GET", "HEAD"):
+            return [
+                (IsBusinessAdmin | IsWarehouseStaff | IsSalesStaff)()
+            ]
 
+        return super().get_permissions()
 
 class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Product.objects.select_related("supplier").all()
     serializer_class = ProductSerializer
     permission_classes = [IsBusinessAdmin]
-
 
 class WarehouseListCreateView(generics.ListCreateAPIView):
     queryset = Warehouse.objects.all()
