@@ -213,6 +213,66 @@ class StockReconciliationAPITests(APITestCase):
         )
         self.assertEqual(movement.created_by, self.user)
 
+    def test_admin_can_reconcile_stock(self):
+        admin = User.objects.create_user(
+            username="reconciliation_admin",
+            password="Test-password-123",
+        )
+        admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        admin.groups.add(admin_group)
+        self.client.force_authenticate(user=admin)
+
+        response = self.client.post(
+            self.url,
+            {
+                "product": self.product.id,
+                "warehouse": self.warehouse.id,
+                "physical_count": 95,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+            response.data,
+        )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 95)
+
+        movement = StockMovement.objects.get()
+        self.assertEqual(movement.quantity, -5)
+        self.assertEqual(movement.created_by, admin)
+
+    def test_sales_staff_cannot_reconcile_stock(self):
+        sales_user = User.objects.create_user(
+            username="reconciliation_sales",
+            password="Test-password-123",
+        )
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_user.groups.add(sales_group)
+        self.client.force_authenticate(user=sales_user)
+
+        response = self.client.post(
+            self.url,
+            {
+                "product": self.product.id,
+                "warehouse": self.warehouse.id,
+                "physical_count": 95,
+            },
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(StockMovement.objects.count(), 0)
+
     def test_reconciliation_api_rejects_negative_count(self):
         response = self.client.post(
             self.url,
