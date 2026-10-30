@@ -143,6 +143,19 @@ class AuthenticationTests(APITestCase):
         with self.assertRaises(TokenError):
             RefreshToken(str(refresh))
 
+    def test_logout_rejects_another_users_refresh_token(self):
+        other_user = User.objects.create_user(
+            username="other-auth-user", password="StrongPass!927"
+        )
+        refresh = RefreshToken.for_user(other_user)
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            "/api/auth/logout/", {"refresh": str(refresh)}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        # The other user's token must not be blacklisted by this request.
+        self.assertEqual(str(RefreshToken(str(refresh))), str(refresh))
+
 
 class RolePermissionTests(APITestCase):
     def setUp(self):

@@ -69,7 +69,9 @@ class CustomerAPITests(APITestCase):
 
         self.list_url = "/api/catalog/customers/"
 
-    def test_authenticated_user_can_list_customers(self):
+    def test_sales_staff_can_list_customers(self):
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.regular_user.groups.add(sales_group)
         self.client.force_authenticate(user=self.regular_user)
 
         response = self.client.get(self.list_url)
@@ -77,6 +79,11 @@ class CustomerAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 2)
         self.assertEqual(len(response.data["results"]), 2)
+
+    def test_ordinary_authenticated_user_cannot_list_customers(self):
+        self.client.force_authenticate(user=self.regular_user)
+        response = self.client.get(self.list_url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_unauthenticated_user_cannot_list_customers(self):
         response = self.client.get(self.list_url)
@@ -131,6 +138,8 @@ class CustomerAPITests(APITestCase):
         )
 
     def test_filter_customers_by_active_status(self):
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.regular_user.groups.add(sales_group)
         self.client.force_authenticate(user=self.regular_user)
 
         response = self.client.get(
@@ -146,6 +155,8 @@ class CustomerAPITests(APITestCase):
         )
 
     def test_search_customers_by_name(self):
+        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        self.regular_user.groups.add(sales_group)
         self.client.force_authenticate(user=self.regular_user)
 
         response = self.client.get(

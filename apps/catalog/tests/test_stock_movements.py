@@ -351,6 +351,7 @@ class StockMovementAPITests(APITestCase):
             name="API Warehouse",
             code="API-WH-001",
         )
+        self.warehouse.assigned_staff.add(self.warehouse_user)
         self.inventory = Inventory.objects.create(
             product=self.product,
             warehouse=self.warehouse,

@@ -62,7 +62,7 @@ class SupplierAPITests(APITestCase):
             Supplier.objects.filter(email="abc@example.com").exists()
         )
 
-    def test_warehouse_staff_can_list_suppliers(self):
+    def test_warehouse_staff_cannot_list_suppliers(self):
         Supplier.objects.create(
             name="ABC Electronics",
             email="abc@example.com",
@@ -71,8 +71,7 @@ class SupplierAPITests(APITestCase):
 
         response = self.client.get(self.list_url)
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(len(response.data["results"]), 1)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_warehouse_staff_cannot_create_supplier(self):
         self.client.force_authenticate(user=self.warehouse_user)

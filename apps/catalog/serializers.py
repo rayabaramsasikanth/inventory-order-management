@@ -5,9 +5,12 @@ from rest_framework import serializers
 
 from apps.catalog.models import (
     Customer,
+    ProductCategory,
+    UnitOfMeasure,
     Inventory,
     Order,
     OrderItem,
+    OrderStatusHistory,
     Product,
     StockMovement,
     Supplier,
@@ -15,6 +18,33 @@ from apps.catalog.models import (
 )
 
 from drf_spectacular.utils import extend_schema_field
+
+
+class ProductCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductCategory
+        fields = ["id", "name", "slug", "description", "is_active", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+
+class UnitOfMeasureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UnitOfMeasure
+        fields = ["id", "code", "name", "decimal_places", "is_active"]
+        read_only_fields = ["id"]
+
+    def validate_code(self, value):
+        value = value.strip().upper()
+        if not value:
+            raise serializers.ValidationError("Unit code cannot be empty.")
+        return value
+
+    def validate_decimal_places(self, value):
+        if value != 0:
+            raise serializers.ValidationError(
+                "This inventory ledger currently stores whole-unit quantities; use decimal_places=0."
+            )
+        return value
 
 
 class SupplierSerializer(serializers.ModelSerializer):
@@ -28,6 +58,8 @@ class SupplierSerializer(serializers.ModelSerializer):
 
 
 class ProductSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True, allow_null=True)
+    unit_of_measure_code = serializers.CharField(source="unit_of_measure.code", read_only=True, allow_null=True)
     supplier_name = serializers.CharField(
         source="supplier.name", read_only=True
     )
@@ -35,37 +67,74 @@ class ProductSerializer(serializers.ModelSerializer):
     class Meta:
         model = Product
         fields = [
-            "id", "sku", "name", "description", "supplier",
-            "supplier_name", "cost_price", "selling_price",
+            "id", "sku", "name", "description", "category", "category_name",
+            "unit_of_measure", "unit_of_measure_code", "supplier", "supplier_name", "cost_price", "selling_price",
             "is_active", "created_at", "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
 
+    def get_fields(self):
+        fields = super().get_fields()
+        if self.instance is not None:
+            # SKU is the stable external identifier; retire a product rather than rename its SKU.
+            fields["sku"].read_only = True
+        return fields
+
+    def to_internal_value(self, data):
+        if self.instance is not None and "sku" in data:
+            raise serializers.ValidationError({
+                "sku": "SKU is immutable. Archive this product and create a new SKU instead."
+            })
+        return super().to_internal_value(data)
+
     def validate_sku(self, value):
-        value = value.strip()
+        value = value.strip().upper()
         if not value:
             raise serializers.ValidationError("SKU cannot be empty.")
+        duplicates = Product.objects.filter(sku__iexact=value)
+        if self.instance is not None:
+            duplicates = duplicates.exclude(pk=self.instance.pk)
+        if duplicates.exists():
+            raise serializers.ValidationError("A product with this SKU already exists.")
         return value
 
     def validate(self, attrs):
-        cost_price = attrs.get(
-            "cost_price", getattr(self.instance, "cost_price", None)
-        )
-        selling_price = attrs.get(
-            "selling_price", getattr(self.instance, "selling_price", None)
-        )
+        category = attrs.get("category", getattr(self.instance, "category", None))
+        unit = attrs.get("unit_of_measure", getattr(self.instance, "unit_of_measure", None))
+        supplier = attrs.get("supplier", getattr(self.instance, "supplier", None))
+        cost_price = attrs.get("cost_price", getattr(self.instance, "cost_price", None))
+        selling_price = attrs.get("selling_price", getattr(self.instance, "selling_price", None))
 
+        if category is not None and not category.is_active:
+            raise serializers.ValidationError({"category": "Select an active category."})
+        if unit is not None and not unit.is_active:
+            raise serializers.ValidationError({"unit_of_measure": "Select an active unit of measure."})
+        if supplier is not None and not supplier.is_active:
+            raise serializers.ValidationError({"supplier": "Select an active supplier."})
         if cost_price is not None and cost_price < Decimal("0.00"):
-            raise serializers.ValidationError({
-                "cost_price": "Cost price cannot be negative."
-            })
-
+            raise serializers.ValidationError({"cost_price": "Cost price cannot be negative."})
         if selling_price is not None and selling_price < Decimal("0.00"):
-            raise serializers.ValidationError({
-                "selling_price": "Selling price cannot be negative."
-            })
-
+            raise serializers.ValidationError({"selling_price": "Selling price cannot be negative."})
         return attrs
+
+    def create(self, validated_data):
+        # Give API-created products usable defaults while keeping nullable
+        # fields for legacy/imported records created outside this serializer.
+        if validated_data.get("category") is None:
+            category, _ = ProductCategory.objects.get_or_create(
+                slug="general", defaults={"name": "General"}
+            )
+            if not category.is_active:
+                raise serializers.ValidationError({"category": "Create or select an active category."})
+            validated_data["category"] = category
+        if validated_data.get("unit_of_measure") is None:
+            unit, _ = UnitOfMeasure.objects.get_or_create(
+                code="EA", defaults={"name": "Each", "decimal_places": 0}
+            )
+            if not unit.is_active:
+                raise serializers.ValidationError({"unit_of_measure": "Create or select an active unit of measure."})
+            validated_data["unit_of_measure"] = unit
+        return super().create(validated_data)
 
 
 class WarehouseSerializer(serializers.ModelSerializer):
@@ -237,6 +306,19 @@ class StockMovementSerializer(serializers.ModelSerializer):
         return attrs
 
 
+class StockTransferSerializer(serializers.Serializer):
+    product = serializers.PrimaryKeyRelatedField(queryset=Product.objects.filter(is_active=True))
+    source_warehouse = serializers.PrimaryKeyRelatedField(queryset=Warehouse.objects.filter(is_active=True))
+    destination_warehouse = serializers.PrimaryKeyRelatedField(queryset=Warehouse.objects.filter(is_active=True))
+    quantity = serializers.IntegerField(min_value=1)
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=255, default="Warehouse transfer")
+
+    def validate(self, attrs):
+        if attrs["source_warehouse"].pk == attrs["destination_warehouse"].pk:
+            raise serializers.ValidationError({"destination_warehouse": "Source and destination warehouses must be different."})
+        return attrs
+
+
 class OrderItemCreateSerializer(serializers.Serializer):
     product = serializers.PrimaryKeyRelatedField(
         queryset=Product.objects.filter(is_active=True)
@@ -322,8 +404,20 @@ class OrderItemReadSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class OrderStatusHistorySerializer(serializers.ModelSerializer):
+    changed_by_username = serializers.CharField(
+        source="changed_by.username", read_only=True, allow_null=True
+    )
+
+    class Meta:
+        model = OrderStatusHistory
+        fields = ["id", "from_status", "to_status", "changed_by", "changed_by_username", "note", "created_at"]
+        read_only_fields = fields
+
+
 class OrderReadSerializer(serializers.ModelSerializer):
     items = OrderItemReadSerializer(many=True, read_only=True)
+    status_history = OrderStatusHistorySerializer(many=True, read_only=True)
     warehouse_code = serializers.CharField(
         source="warehouse.code", read_only=True
     )
@@ -342,7 +436,7 @@ class OrderReadSerializer(serializers.ModelSerializer):
         fields = [
             "id", "order_number", "customer", "customer_name",
             "warehouse", "warehouse_code", "created_by",
-            "created_by_username", "status", "items",
-            "total_amount", "created_at", "updated_at",
+            "created_by_username", "status", "items", "status_history",
+            "total_amount", "expires_at", "created_at", "updated_at",
         ]
         read_only_fields = fields

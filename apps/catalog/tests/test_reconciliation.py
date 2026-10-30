@@ -176,6 +176,7 @@ class StockReconciliationAPITests(APITestCase):
             code="RECON-API-WH",
             address="Test address",
         )
+        self.warehouse.assigned_staff.add(self.user)
         self.inventory = Inventory.objects.create(
             product=self.product,
             warehouse=self.warehouse,

@@ -8,6 +8,8 @@ from rest_framework.response import Response
 
 from apps.catalog.models import (
     Customer,
+    ProductCategory,
+    UnitOfMeasure,
     Inventory,
     Order,
     Product,
@@ -17,27 +19,28 @@ from apps.catalog.models import (
 )
 from apps.catalog.serializers import (
     CustomerSerializer,
+    ProductCategorySerializer,
+    UnitOfMeasureSerializer,
     InventorySerializer,
     OrderCreateSerializer,
     OrderReadSerializer,
     ProductSerializer,
     StockMovementSerializer,
     StockReconciliationSerializer,
+    StockTransferSerializer,
     SupplierSerializer,
     WarehouseSerializer,
 )
+
+from apps.core.idempotency import execute_idempotently
+from apps.catalog.cache import get_or_compute, invalidate_product_cache, product_cache_version
 
 from apps.catalog.services import (
     fulfil_order,
     reconcile_stock,
     record_stock_movement,
+    transfer_stock,
     update_order_status,
-)
-
-from apps.core.permissions import (
-    IsAdminUser as IsBusinessAdmin,
-    IsWarehouseStaff,
-    IsSalesStaff,
 )
 
 from drf_spectacular.utils import (
@@ -47,6 +50,85 @@ from drf_spectacular.utils import (
     extend_schema_view,
 )
 
+from apps.core.permissions import (
+    IsAdminUser as IsBusinessAdmin,
+    IsWarehouseStaff,
+    IsSalesStaff,
+    is_admin,
+    assigned_warehouse_ids,
+)
+
+
+def warehouse_scoped(queryset, user, field="warehouse_id"):
+    """Restrict warehouse staff to explicitly assigned warehouses."""
+    if is_admin(user):
+        return queryset
+    if user.groups.filter(name="Warehouse Staff").exists():
+        return queryset.filter(
+            **{f"{field}__in": assigned_warehouse_ids(user)}
+        )
+    return queryset.none()
+
+class ProductCategoryListCreateView(generics.ListCreateAPIView):
+    queryset = ProductCategory.objects.all()
+    serializer_class = ProductCategorySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in {"POST"}:
+            return [IsBusinessAdmin()]
+        return [(IsBusinessAdmin | IsWarehouseStaff | IsSalesStaff)()]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+
+class ProductCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = ProductCategory.objects.all()
+    serializer_class = ProductCategorySerializer
+    permission_classes = [IsBusinessAdmin]
+
+    def perform_update(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+    def perform_destroy(self, instance):
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        invalidate_product_cache()
+
+
+class UnitOfMeasureListCreateView(generics.ListCreateAPIView):
+    queryset = UnitOfMeasure.objects.all()
+    serializer_class = UnitOfMeasureSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [IsBusinessAdmin()]
+        return [(IsBusinessAdmin | IsWarehouseStaff | IsSalesStaff)()]
+
+    def perform_create(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+
+class UnitOfMeasureDetailView(generics.RetrieveUpdateDestroyAPIView):
+    queryset = UnitOfMeasure.objects.all()
+    serializer_class = UnitOfMeasureSerializer
+    permission_classes = [IsBusinessAdmin]
+
+    def perform_update(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+    def perform_destroy(self, instance):
+        instance.is_active = False
+        instance.save(update_fields=["is_active"])
+        invalidate_product_cache()
+
+
 class SupplierListCreateView(generics.ListCreateAPIView):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
@@ -55,14 +137,24 @@ class SupplierListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
-
+        if self.request.method in {"GET", "HEAD"}:
+            return [(IsBusinessAdmin | IsSalesStaff)()]
         return super().get_permissions()
 
 
 class SupplierDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
-    permission_classes = [IsBusinessAdmin]
+    permission_classes = [IsBusinessAdmin | IsSalesStaff]
+
+    def perform_update(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+    def get_permissions(self):
+        if self.request.method in {"PUT", "PATCH", "DELETE"}:
+            return [IsBusinessAdmin()]
+        return super().get_permissions()
 
 @extend_schema_view(
     get=extend_schema(
@@ -113,14 +205,15 @@ class CustomerListCreateView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
-
+        if self.request.method in {"GET", "HEAD"}:
+            return [(IsBusinessAdmin | IsSalesStaff)()]
         return super().get_permissions()
 
 
 class CustomerDetailView(generics.RetrieveUpdateAPIView):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsBusinessAdmin | IsSalesStaff]
 
     def get_permissions(self):
         if self.request.method in ("PUT", "PATCH"):
@@ -184,7 +277,7 @@ class CustomerDetailView(generics.RetrieveUpdateAPIView):
     ),
 )
 class ProductListCreateView(generics.ListCreateAPIView):
-    queryset = Product.objects.select_related("supplier").all()
+    queryset = Product.objects.select_related("supplier", "category", "unit_of_measure").all()
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
 
@@ -194,7 +287,7 @@ class ProductListCreateView(generics.ListCreateAPIView):
         filters.OrderingFilter,
     ]
     search_fields = ["name", "sku", "description"]
-    filterset_fields = ["supplier", "is_active"]
+    filterset_fields = ["supplier", "category", "unit_of_measure", "is_active"]
     ordering_fields = ["name", "selling_price", "created_at"]
     ordering = ["name"]
 
@@ -209,20 +302,50 @@ class ProductListCreateView(generics.ListCreateAPIView):
 
         return super().get_permissions()
 
+    def get_queryset(self):
+        return Product.objects.select_related("supplier", "category", "unit_of_measure").all()
+
+    def list(self, request, *args, **kwargs):
+        query = request.query_params.urlencode()
+        key = f"catalog:products:list:{product_cache_version()}:{request.get_host()}:{query or 'all'}"
+        data = get_or_compute(key, lambda: super(ProductListCreateView, self).list(request, *args, **kwargs).data, timeout=60)
+        return Response(data)
+
+    def perform_create(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
 class ProductDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Product.objects.select_related("supplier").all()
+    queryset = Product.objects.select_related("supplier", "category", "unit_of_measure").all()
     serializer_class = ProductSerializer
     permission_classes = [IsBusinessAdmin]
+
+    def perform_update(self, serializer):
+        serializer.save()
+        invalidate_product_cache()
+
+    def perform_destroy(self, instance):
+        # Keep historical stock/order foreign keys intact; retire the SKU.
+        instance.is_active = False
+        instance.save(update_fields=["is_active", "updated_at"])
+        invalidate_product_cache()
+
 
 class WarehouseListCreateView(generics.ListCreateAPIView):
     queryset = Warehouse.objects.all()
     serializer_class = WarehouseSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        return warehouse_scoped(
+            Warehouse.objects.all(), self.request.user, field="id"
+        )
+
     def get_permissions(self):
         if self.request.method == "POST":
             return [IsBusinessAdmin()]
-
+        if self.request.method in {"GET", "HEAD"}:
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
         return super().get_permissions()
 
 
@@ -240,11 +363,26 @@ class InventoryListCreateView(generics.ListCreateAPIView):
     serializer_class = InventorySerializer
     permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        base = Inventory.objects.select_related("product", "warehouse")
+        return warehouse_scoped(base, self.request.user)
+
     def get_permissions(self):
         if self.request.method == "POST":
             return [(IsBusinessAdmin | IsWarehouseStaff)()]
-
+        if self.request.method in {"GET", "HEAD"}:
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
         return super().get_permissions()
+
+    def perform_create(self, serializer):
+        warehouse = serializer.validated_data["warehouse"]
+        if (
+            not is_admin(self.request.user)
+            and not warehouse.assigned_staff.filter(pk=self.request.user.pk).exists()
+        ):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You are not assigned to this warehouse.")
+        serializer.save()
 
 @extend_schema_view(
     post=extend_schema(
@@ -272,10 +410,21 @@ class StockReconciliationView(generics.GenericAPIView):
         return super().get_permissions()
 
     def post(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: self._post_reconciliation(request, *args, **kwargs)
+        )
+
+    def _post_reconciliation(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+        if (
+            not is_admin(request.user)
+            and not data["warehouse"].assigned_staff.filter(pk=request.user.pk).exists()
+        ):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You are not assigned to this warehouse.")
 
         try:
             movement = reconcile_stock(
@@ -306,18 +455,58 @@ class StockReconciliationView(generics.GenericAPIView):
 
 
 class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Inventory.objects.select_related(
-        "product",
-        "warehouse",
-    ).all()
     serializer_class = InventorySerializer
     permission_classes = [IsAuthenticated]
 
-    def get_permissions(self):
-        if self.request.method in {"PUT", "PATCH", "DELETE"}:
-            return [(IsBusinessAdmin | IsWarehouseStaff)()]
+    def get_queryset(self):
+        base = Inventory.objects.select_related("product", "warehouse")
+        return warehouse_scoped(base, self.request.user)
 
+    def get_permissions(self):
+        if self.request.method in {"GET", "HEAD", "PUT", "PATCH", "DELETE"}:
+            return [(IsBusinessAdmin | IsWarehouseStaff)()]
         return super().get_permissions()
+
+class StockTransferView(generics.GenericAPIView):
+    serializer_class = StockTransferSerializer
+    permission_classes = [IsAuthenticated & (IsBusinessAdmin | IsWarehouseStaff)]
+
+    @extend_schema(
+        summary="Transfer stock between warehouses",
+        request=StockTransferSerializer,
+        responses={201: StockMovementSerializer(many=True)},
+        description="Creates paired transfer-out and transfer-in ledger entries atomically. Send an Idempotency-Key header to make client retries safe.",
+    )
+    def post(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: self._transfer(request, *args, **kwargs)
+        )
+
+    def _transfer(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if not is_admin(request.user):
+            assigned = set(assigned_warehouse_ids(request.user))
+            if data["source_warehouse"].pk not in assigned or data["destination_warehouse"].pk not in assigned:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("You must be assigned to both warehouses to transfer stock.")
+        try:
+            movements = transfer_stock(
+                product=data["product"],
+                source_warehouse=data["source_warehouse"],
+                destination_warehouse=data["destination_warehouse"],
+                quantity=data["quantity"],
+                created_by=request.user,
+                reason=data.get("reason", "Warehouse transfer"),
+            )
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({"detail": exc.messages}) from exc
+        return Response(
+            StockMovementSerializer(movements, many=True).data,
+            status=status.HTTP_201_CREATED,
+        )
+
 
 @extend_schema_view(
     get=extend_schema(
@@ -332,7 +521,8 @@ class InventoryDetailView(generics.RetrieveUpdateDestroyAPIView):
         description=(
             "Records an inventory movement. Direct transfer-in and "
             "transfer-out movements are not permitted; use the transfer "
-            "workflow instead. Requires business-admin or warehouse-staff permission."
+            "workflow instead. Requires business-admin or warehouse-staff permission. "
+            "Send an Idempotency-Key header to safely retry the same request."
         ),
         request=StockMovementSerializer,
         responses={201: StockMovementSerializer},
@@ -342,23 +532,32 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
     serializer_class = StockMovementSerializer
 
     def get_queryset(self):
-        return StockMovement.objects.select_related(
-            "product",
-            "warehouse",
-            "created_by",
-        ).all()
+        base = StockMovement.objects.select_related(
+            "product", "warehouse", "created_by",
+        )
+        return warehouse_scoped(base, self.request.user)
 
     def get_permissions(self):
-        if self.request.method in {"GET", "POST"}:
+        if self.request.method in {"GET", "HEAD", "POST"}:
             return [(IsBusinessAdmin | IsWarehouseStaff)()]
-
         return super().get_permissions()
 
     def create(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: self._create_movement(request, *args, **kwargs)
+        )
+
+    def _create_movement(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
+        if (
+            not is_admin(request.user)
+            and not data["warehouse"].assigned_staff.filter(pk=request.user.pk).exists()
+        ):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("You are not assigned to this warehouse.")
 
         try:
             movement = record_stock_movement(
@@ -391,7 +590,8 @@ class StockMovementListCreateView(generics.ListCreateAPIView):
         summary="Create order",
         description=(
             "Creates an order with its items. Requires business-admin "
-            "or sales-staff permission."
+            "or sales-staff permission. Send an Idempotency-Key header "
+            "to safely retry the same request."
         ),
         request=OrderCreateSerializer,
         responses={201: OrderReadSerializer},
@@ -404,7 +604,7 @@ class OrderListCreateView(generics.ListCreateAPIView):
         return (
             Order.objects
             .select_related("customer", "warehouse", "created_by")
-            .prefetch_related("items__product")
+            .prefetch_related("items__product", "status_history__changed_by")
             .order_by("-created_at")
         )
 
@@ -423,6 +623,11 @@ class OrderListCreateView(generics.ListCreateAPIView):
 
         return OrderReadSerializer
 
+    def create(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: super(OrderListCreateView, self).create(request, *args, **kwargs)
+        )
+
 @extend_schema(
     summary="Retrieve order",
     description="Returns an order and its items. Requires authentication.",
@@ -432,7 +637,7 @@ class OrderDetailView(generics.RetrieveAPIView):
     queryset = (
         Order.objects
         .select_related("customer", "warehouse", "created_by")
-        .prefetch_related("items__product")
+        .prefetch_related("items__product", "status_history__changed_by")
     )
     serializer_class = OrderReadSerializer
     permission_classes = [
@@ -466,13 +671,18 @@ class OrderStatusUpdateView(generics.GenericAPIView):
         "customer",
         "warehouse",
         "created_by",
-    ).prefetch_related("items__product")
+    ).prefetch_related("items__product", "status_history__changed_by")
     serializer_class = OrderReadSerializer
     permission_classes = [
         IsAuthenticated & (IsBusinessAdmin | IsSalesStaff)
     ]
 
     def patch(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: self._update_status(request, *args, **kwargs)
+        )
+
+    def _update_status(self, request, *args, **kwargs):
         order = self.get_object()
         new_status = request.data.get("status")
 
@@ -526,17 +736,27 @@ class OrderStatusUpdateView(generics.GenericAPIView):
     ),
 )
 class OrderFulfilmentView(generics.GenericAPIView):
-    queryset = (
-        Order.objects
-        .select_related("customer", "warehouse", "created_by")
-        .prefetch_related("items__product")
-    )
     serializer_class = OrderReadSerializer
+
+    def get_queryset(self):
+        base = Order.objects.select_related(
+            "customer", "warehouse", "created_by"
+        ).prefetch_related("items__product", "status_history__changed_by")
+        if is_admin(self.request.user):
+            return base
+        return base.filter(
+            warehouse_id__in=assigned_warehouse_ids(self.request.user)
+        )
     permission_classes = [
         IsAuthenticated & (IsBusinessAdmin | IsWarehouseStaff)
     ]
 
     def post(self, request, *args, **kwargs):
+        return execute_idempotently(
+            request, lambda: self._fulfil(request, *args, **kwargs)
+        )
+
+    def _fulfil(self, request, *args, **kwargs):
         order = self.get_object()
         quantities = request.data.get("quantities")
 

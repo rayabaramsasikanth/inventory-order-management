@@ -81,10 +81,11 @@ class WarehouseAPITests(APITestCase):
         )
 
     def test_warehouse_staff_can_list_warehouses(self):
-        Warehouse.objects.create(
+        warehouse = Warehouse.objects.create(
             name="Hyderabad Main Warehouse",
             code="HYD-001",
         )
+        warehouse.assigned_staff.add(self.warehouse_user)
         self.client.force_authenticate(user=self.warehouse_user)
 
         response = self.client.get(self.list_url)

@@ -2,6 +2,10 @@
 from django.urls import path
 
 from apps.catalog.views import (
+    ProductCategoryListCreateView,
+    ProductCategoryDetailView,
+    UnitOfMeasureListCreateView,
+    UnitOfMeasureDetailView,
     CustomerDetailView,
     CustomerListCreateView,
     InventoryDetailView,
@@ -14,6 +18,7 @@ from apps.catalog.views import (
     ProductListCreateView,
     StockMovementListCreateView,
     StockReconciliationView,
+    StockTransferView,
     SupplierDetailView,
     SupplierListCreateView,
     WarehouseDetailView,
@@ -21,6 +26,10 @@ from apps.catalog.views import (
 )
 
 urlpatterns = [
+    path("categories/", ProductCategoryListCreateView.as_view(), name="category-list-create"),
+    path("categories/<int:pk>/", ProductCategoryDetailView.as_view(), name="category-detail"),
+    path("units/", UnitOfMeasureListCreateView.as_view(), name="unit-list-create"),
+    path("units/<int:pk>/", UnitOfMeasureDetailView.as_view(), name="unit-detail"),
     path(
         "suppliers/",
         SupplierListCreateView.as_view(),
@@ -66,6 +75,7 @@ urlpatterns = [
         StockReconciliationView.as_view(),
         name="inventory-reconcile",
     ),
+    path("stock-transfers/", StockTransferView.as_view(), name="stock-transfer"),
     path(
         "stock-movements/",
         StockMovementListCreateView.as_view(),

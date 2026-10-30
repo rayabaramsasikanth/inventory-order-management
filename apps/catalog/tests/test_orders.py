@@ -14,6 +14,7 @@ from apps.catalog.models import (
     StockMovement,
     Order,
     OrderItem,
+    OrderStatusHistory,
     Customer,
 )
 
@@ -1052,6 +1053,7 @@ class OrderReadPermissionTests(APITestCase):
             name=WAREHOUSE_GROUP,
         )
         self.user.groups.add(warehouse_group)
+        self.order.warehouse.assigned_staff.add(self.user)
         self.client.force_authenticate(user=self.user)
 
         self.order.status = Order.Status.PROCESSING
@@ -1076,3 +1078,26 @@ class OrderReadPermissionTests(APITestCase):
 
         order_item.refresh_from_db()
         self.assertEqual(order_item.fulfilled_quantity, 1)
+
+class OrderStatusHistoryTests(APITestCase):
+    def test_order_creation_records_initial_status_history(self):
+        user = User.objects.create_user(
+            username="history_audit_user", password="StrongPass!927"
+        )
+        supplier = Supplier.objects.create(
+            name="History Supplier", email="history-supplier@example.com"
+        )
+        product = Product.objects.create(
+            sku="HISTORY-001", name="History Product", supplier=supplier,
+            cost_price="5.00", selling_price="8.00",
+        )
+        warehouse = Warehouse.objects.create(name="History WH", code="HISTORY-WH")
+        Inventory.objects.create(product=product, warehouse=warehouse, quantity=4)
+        order = create_order(
+            order_number="HISTORY-ORDER-001", warehouse=warehouse,
+            items=[{"product": product, "quantity": 2}], created_by=user,
+        )
+        history = OrderStatusHistory.objects.get(order=order)
+        self.assertEqual(history.from_status, "")
+        self.assertEqual(history.to_status, Order.Status.PENDING)
+        self.assertEqual(history.changed_by, user)

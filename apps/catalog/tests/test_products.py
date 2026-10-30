@@ -101,8 +101,6 @@ class ProductAPITests(APITestCase):
         self.client.force_authenticate(user=self.warehouse_user)
 
         response = self.client.get(self.list_url)
-        print("STATUS:", response.status_code)
-        print("DATA:", response.data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data["results"]), 1)
@@ -263,8 +261,6 @@ class ProductAPITests(APITestCase):
             self.list_url,
             {"search": "Gaming Mouse"},
         )
-        print("STATUS:", response.status_code)
-        print("DATA:", response.data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
@@ -296,8 +292,6 @@ class ProductAPITests(APITestCase):
             self.list_url,
             {"is_active": "false"},
         )
-        print("STATUS:", response.status_code)
-        print("DATA:", response.data)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
@@ -358,3 +352,28 @@ class ProductAPITests(APITestCase):
         self.assertEqual(response.data["count"], 3)
         self.assertEqual(len(response.data["results"]), 2)
         self.assertIsNotNone(response.data["next"])
+
+
+    def test_admin_cannot_change_existing_sku(self):
+        product = Product.objects.create(
+            sku="IMMUTABLE-001", name="Stable SKU Product", supplier=self.supplier,
+            cost_price="10.00", selling_price="15.00",
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            f"{self.list_url}{product.pk}/", {"sku": "CHANGED-001"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        product.refresh_from_db()
+        self.assertEqual(product.sku, "IMMUTABLE-001")
+
+    def test_admin_delete_archives_product_instead_of_removing_history(self):
+        product = Product.objects.create(
+            sku="ARCHIVE-001", name="Archived Product", supplier=self.supplier,
+            cost_price="10.00", selling_price="15.00",
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.delete(f"{self.list_url}{product.pk}/")
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        product.refresh_from_db()
+        self.assertFalse(product.is_active)

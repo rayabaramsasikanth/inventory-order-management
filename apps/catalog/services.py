@@ -1,16 +1,24 @@
 
+import logging
+from datetime import timedelta
+
+from django.conf import settings
+from django.utils import timezone
 from django.core.exceptions import ValidationError
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.catalog.models import (
     Customer,
     Inventory,
     Order,
     OrderItem,
+    OrderStatusHistory,
     Product,
     StockMovement,
     Warehouse,
 )
+
+logger = logging.getLogger("apps.catalog.services")
 
 
 @transaction.atomic
@@ -76,11 +84,12 @@ def record_stock_movement(
                 "Cannot remove stock when no inventory record exists."
             )
 
-        inventory = Inventory.objects.create(
+        inventory, _ = Inventory.objects.get_or_create(
             product=product,
             warehouse=warehouse,
-            quantity=0,
+            defaults={"quantity": 0},
         )
+        inventory = Inventory.objects.select_for_update().get(pk=inventory.pk)
 
     new_quantity = inventory.quantity + quantity
 
@@ -97,7 +106,7 @@ def record_stock_movement(
     inventory.quantity = new_quantity
     inventory.save(update_fields=["quantity", "updated_at"])
 
-    return StockMovement.objects.create(
+    movement = StockMovement.objects.create(
         product=product,
         warehouse=warehouse,
         quantity=quantity,
@@ -105,6 +114,11 @@ def record_stock_movement(
         reason=reason,
         created_by=created_by,
     )
+    logger.info(
+        "Stock movement created id=%s product_id=%s warehouse_id=%s actor_id=%s quantity=%s type=%s",
+        movement.pk, product.pk, warehouse.pk, created_by.pk, quantity, movement_type,
+    )
+    return movement
 
 
 @transaction.atomic
@@ -332,10 +346,13 @@ def transfer_stock(
     )
 
     if destination_inventory is None:
-        destination_inventory = Inventory.objects.create(
+        destination_inventory, _ = Inventory.objects.get_or_create(
             product=product,
             warehouse=destination_warehouse,
-            quantity=0,
+            defaults={"quantity": 0},
+        )
+        destination_inventory = Inventory.objects.select_for_update().get(
+            pk=destination_inventory.pk
         )
 
     source_inventory.quantity -= quantity
@@ -439,12 +456,27 @@ def create_order(
             "One or more products do not exist or are inactive."
         )
 
-    order = Order.objects.create(
-        order_number=order_number.strip(),
-        customer=customer,
-        warehouse=warehouse,
-        created_by=created_by,
+    try:
+        with transaction.atomic():
+            order = Order.objects.create(
+                order_number=order_number.strip(),
+                customer=customer,
+                warehouse=warehouse,
+                created_by=created_by,
+                expires_at=timezone.now() + timedelta(
+                    minutes=int(getattr(settings, "ORDER_RESERVATION_TTL_MINUTES", 30))
+                ),
+            )
+    except IntegrityError as exc:
+        raise ValidationError("This order number already exists.") from exc
+    OrderStatusHistory.objects.create(
+        order=order,
+        from_status="",
+        to_status=order.status,
+        changed_by=created_by,
+        note="Order created and stock reserved.",
     )
+    logger.info("Order created id=%s warehouse_id=%s actor_id=%s", order.pk, warehouse.pk, created_by.pk)
 
     items_by_product = {
         item["product"].pk: item
@@ -472,7 +504,7 @@ def create_order(
 
 
 @transaction.atomic
-def cancel_order(*, order_id):
+def cancel_order(*, order_id, cancelled_by=None):
     """Cancel a pending or confirmed order and release its stock."""
 
     order = (
@@ -503,8 +535,17 @@ def cancel_order(*, order_id):
             quantity=item.quantity,
         )
 
+    previous_status = order.status
     order.status = Order.Status.CANCELLED
-    order.save(update_fields=["status", "updated_at"])
+    order.expires_at = None
+    order.save(update_fields=["status", "expires_at", "updated_at"])
+    OrderStatusHistory.objects.create(
+        order=order,
+        from_status=previous_status,
+        to_status=order.status,
+        changed_by=cancelled_by,
+        note="Order cancelled; outstanding reservations released.",
+    )
 
     return order
 
@@ -629,9 +670,18 @@ def fulfil_order(*, order_id, fulfilled_by, quantities=None):
     )
 
     if all_fulfilled:
+        previous_status = order.status
         order.status = Order.Status.FULFILLED
+        order.expires_at = None
+        OrderStatusHistory.objects.create(
+            order=order,
+            from_status=previous_status,
+            to_status=order.status,
+            changed_by=fulfilled_by,
+            note="All order quantities fulfilled.",
+        )
 
-    order.save(update_fields=["status", "updated_at"])
+    order.save(update_fields=["status", "expires_at", "updated_at"])
 
     return order
 
@@ -675,7 +725,7 @@ def update_order_status(*, order_id, new_status, updated_by):
         )
 
     if new_status == Order.Status.CANCELLED:
-        return cancel_order(order_id=order.pk)
+        return cancel_order(order_id=order.pk, cancelled_by=updated_by)
 
     if new_status == Order.Status.FULFILLED:
         return fulfil_order(
@@ -683,7 +733,16 @@ def update_order_status(*, order_id, new_status, updated_by):
             fulfilled_by=updated_by,
         )
 
+    previous_status = order.status
     order.status = new_status
-    order.save(update_fields=["status", "updated_at"])
+    if new_status in {Order.Status.CONFIRMED, Order.Status.PROCESSING}:
+        order.expires_at = None
+    order.save(update_fields=["status", "expires_at", "updated_at"])
+    OrderStatusHistory.objects.create(
+        order=order,
+        from_status=previous_status,
+        to_status=new_status,
+        changed_by=updated_by,
+    )
 
     return order

@@ -5,6 +5,35 @@ from django.db import models
 from django.db.models import F
 
 
+class ProductCategory(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    slug = models.SlugField(max_length=120, unique=True)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name_plural = "product categories"
+
+    def __str__(self):
+        return self.name
+
+
+class UnitOfMeasure(models.Model):
+    code = models.CharField(max_length=20, unique=True)
+    name = models.CharField(max_length=80)
+    decimal_places = models.PositiveSmallIntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
 class Supplier(models.Model):
     name = models.CharField(max_length=150)
     email = models.EmailField(unique=True)
@@ -25,6 +54,14 @@ class Product(models.Model):
     sku = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=200)
     description = models.TextField(blank=True)
+    category = models.ForeignKey(
+        ProductCategory, on_delete=models.PROTECT, related_name="products",
+        null=True, blank=True,
+    )
+    unit_of_measure = models.ForeignKey(
+        UnitOfMeasure, on_delete=models.PROTECT, related_name="products",
+        null=True, blank=True,
+    )
 
     supplier = models.ForeignKey(
         Supplier,
@@ -60,6 +97,11 @@ class Warehouse(models.Model):
     code = models.CharField(max_length=30, unique=True)
     address = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    assigned_staff = models.ManyToManyField(
+        settings.AUTH_USER_MODEL,
+        related_name="assigned_warehouses",
+        blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -158,6 +200,16 @@ class StockMovement(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["warehouse", "-created_at"],
+                name="movement_wh_created_idx",
+            ),
+            models.Index(
+                fields=["product", "-created_at"],
+                name="movement_product_created_idx",
+            ),
+        ]
 
     def __str__(self):
         return (
@@ -202,9 +254,20 @@ class Order(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            models.Index(
+                fields=["warehouse", "status", "-created_at"],
+                name="order_wh_status_created_idx",
+            ),
+            models.Index(
+                fields=["created_by", "-created_at"],
+                name="order_creator_created_idx",
+            ),
+        ]
 
     @property
     def total_amount(self):
@@ -272,3 +335,28 @@ class OrderItem(models.Model):
 
     def __str__(self):
         return f"{self.order.order_number} - {self.product.sku}"
+
+
+class OrderStatusHistory(models.Model):
+    """Immutable audit record for each order status transition."""
+
+    order = models.ForeignKey(
+        Order, on_delete=models.PROTECT, related_name="status_history"
+    )
+    from_status = models.CharField(max_length=20, blank=True)
+    to_status = models.CharField(max_length=20)
+    changed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="order_status_changes",
+    )
+    note = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-pk"]
+
+    def __str__(self):
+        return f"{self.order.order_number}: {self.from_status} -> {self.to_status}"
