@@ -912,6 +912,53 @@ class OrderReadPermissionTests(APITestCase):
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data["id"], self.order.pk)
 
+    def test_admin_can_update_order_status(self):
+        admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        self.user.groups.add(admin_group)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.patch(
+            reverse(
+                "order-status-update",
+                kwargs={"pk": self.order.pk},
+            ),
+            {"status": Order.Status.CONFIRMED},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+            response.data,
+        )
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.CONFIRMED)
+
+    def test_warehouse_staff_cannot_update_order_status(self):
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP,
+        )
+        self.user.groups.add(warehouse_group)
+        self.client.force_authenticate(user=self.user)
+
+        response = self.client.patch(
+            reverse(
+                "order-status-update",
+                kwargs={"pk": self.order.pk},
+            ),
+            {"status": Order.Status.CONFIRMED},
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        self.order.refresh_from_db()
+        self.assertEqual(self.order.status, Order.Status.PENDING)
+
     def test_warehouse_staff_cannot_create_order(self):
         warehouse_group, _ = Group.objects.get_or_create(
             name=WAREHOUSE_GROUP,
