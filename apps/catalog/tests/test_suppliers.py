@@ -1,40 +1,16 @@
-from unittest.mock import patch
-from django.core.exceptions import ValidationError
+
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Group
 
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.catalog.models import (
-    Supplier,
-    Product,
-    Warehouse,
-    Inventory,
-    StockMovement,
-    Order,
-    OrderItem,
-    Customer,
+from apps.catalog.models import Supplier
+from apps.core.permissions import (
+    ADMIN_GROUP,
+    SALES_GROUP,
+    WAREHOUSE_GROUP,
 )
-
-from apps.catalog.services import (
-    record_stock_movement,
-    reserve_stock,
-    release_reserved_stock,
-    transfer_stock,
-    create_order,
-    cancel_order,
-    fulfil_order,
-    reconcile_stock,
-)
-
-from apps.core.permissions import ADMIN_GROUP, WAREHOUSE_GROUP
-from unittest.mock import patch
-from decimal import Decimal
-from apps.catalog.services import update_order_status
-
-from django.urls import reverse
-from apps.core.permissions import SALES_GROUP
 
 User = get_user_model()
 
@@ -45,7 +21,9 @@ class SupplierAPITests(APITestCase):
             username="supplieradmin",
             password="StrongPass!927",
         )
-        self.admin_group, _ = Group.objects.get_or_create(name=ADMIN_GROUP)
+        self.admin_group, _ = Group.objects.get_or_create(
+            name=ADMIN_GROUP,
+        )
         self.admin.groups.add(self.admin_group)
 
         self.warehouse_user = User.objects.create_user(
@@ -53,7 +31,7 @@ class SupplierAPITests(APITestCase):
             password="StrongPass!927",
         )
         self.warehouse_group, _ = Group.objects.get_or_create(
-            name=WAREHOUSE_GROUP
+            name=WAREHOUSE_GROUP,
         )
         self.warehouse_user.groups.add(self.warehouse_group)
 
@@ -76,7 +54,10 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_201_CREATED,
+        )
         self.assertTrue(
             Supplier.objects.filter(email="abc@example.com").exists()
         )
@@ -102,7 +83,10 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
         self.assertEqual(Supplier.objects.count(), 0)
 
     def test_anonymous_user_cannot_list_suppliers(self):
@@ -127,6 +111,7 @@ class SupplierAPITests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
+
         supplier.refresh_from_db()
         self.assertEqual(supplier.phone, "+91 9999999999")
 
@@ -137,20 +122,26 @@ class SupplierAPITests(APITestCase):
         )
         self.client.force_authenticate(user=self.admin)
 
-        response = self.client.delete(f"{self.list_url}{supplier.pk}/")
+        response = self.client.delete(
+            f"{self.list_url}{supplier.pk}/"
+        )
 
-        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_204_NO_CONTENT,
+        )
         self.assertFalse(
             Supplier.objects.filter(pk=supplier.pk).exists()
         )
-
 
     def test_sales_staff_cannot_create_supplier(self):
         sales_user = User.objects.create_user(
             username="salessupplier",
             password="StrongPass!927",
         )
-        sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
+        sales_group, _ = Group.objects.get_or_create(
+            name=SALES_GROUP,
+        )
         sales_user.groups.add(sales_group)
         self.client.force_authenticate(user=sales_user)
 
@@ -160,7 +151,10 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
         self.assertEqual(Supplier.objects.count(), 0)
 
     def test_warehouse_staff_cannot_retrieve_supplier(self):
@@ -170,9 +164,14 @@ class SupplierAPITests(APITestCase):
         )
         self.client.force_authenticate(user=self.warehouse_user)
 
-        response = self.client.get(f"{self.list_url}{supplier.pk}/")
+        response = self.client.get(
+            f"{self.list_url}{supplier.pk}/"
+        )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_warehouse_staff_cannot_update_supplier(self):
         supplier = Supplier.objects.create(
@@ -187,7 +186,11 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
         supplier.refresh_from_db()
         self.assertNotEqual(supplier.phone, "+91 9999999999")
 
@@ -198,10 +201,17 @@ class SupplierAPITests(APITestCase):
         )
         self.client.force_authenticate(user=self.warehouse_user)
 
-        response = self.client.delete(f"{self.list_url}{supplier.pk}/")
+        response = self.client.delete(
+            f"{self.list_url}{supplier.pk}/"
+        )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertTrue(Supplier.objects.filter(pk=supplier.pk).exists())
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertTrue(
+            Supplier.objects.filter(pk=supplier.pk).exists()
+        )
 
     def test_ordinary_user_cannot_create_supplier(self):
         ordinary_user = User.objects.create_user(
@@ -216,5 +226,48 @@ class SupplierAPITests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
         self.assertEqual(Supplier.objects.count(), 0)
+
+    def test_ordinary_user_cannot_access_supplier_detail_actions(self):
+        ordinary_user = User.objects.create_user(
+            username="ordinarysupplierdetail",
+            password="StrongPass!927",
+        )
+        supplier = Supplier.objects.create(
+            name="ABC Electronics",
+            email="abc@example.com",
+        )
+        self.client.force_authenticate(user=ordinary_user)
+
+        detail_url = f"{self.list_url}{supplier.pk}/"
+
+        retrieve_response = self.client.get(detail_url)
+        update_response = self.client.patch(
+            detail_url,
+            {"phone": "+91 9999999999"},
+            format="json",
+        )
+        delete_response = self.client.delete(detail_url)
+
+        self.assertEqual(
+            retrieve_response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            update_response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+        self.assertEqual(
+            delete_response.status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+        supplier.refresh_from_db()
+        self.assertTrue(
+            Supplier.objects.filter(pk=supplier.pk).exists()
+        )
+        self.assertNotEqual(supplier.phone, "+91 9999999999")
