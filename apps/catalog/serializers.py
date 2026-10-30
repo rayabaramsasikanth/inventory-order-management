@@ -128,6 +128,15 @@ class InventorySerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
         ]
 
+    def get_fields(self):
+        fields = super().get_fields()
+
+        if self.instance is not None:
+            fields["product"].read_only = True
+            fields["warehouse"].read_only = True
+
+        return fields
+
     @extend_schema_field(serializers.IntegerField())
     def get_available_quantity(self, obj):
         return obj.quantity - obj.reserved_quantity

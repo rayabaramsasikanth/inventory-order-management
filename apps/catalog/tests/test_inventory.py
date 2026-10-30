@@ -536,3 +536,34 @@ class InventoryAPITests(APITestCase):
         self.assertFalse(
             Inventory.objects.filter(pk=inventory_id).exists()
         )
+
+    def test_update_inventory_cannot_change_product_or_warehouse(self):
+        another_product = Product.objects.create(
+            sku="INV-TEST-003",
+            name="Another Inventory Product",
+            supplier=self.supplier,
+            cost_price="30.00",
+            selling_price="45.00",
+        )
+
+        another_warehouse = Warehouse.objects.create(
+            name="Another Inventory Warehouse",
+            code="INV-WH-02",
+            address="Another test address",
+        )
+
+        response = self.client.patch(
+            f"/api/catalog/inventory/{self.inventory.id}/",
+            {
+                "product": another_product.id,
+                "warehouse": another_warehouse.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.inventory.refresh_from_db()
+
+        self.assertEqual(self.inventory.product_id, self.product.id)
+        self.assertEqual(self.inventory.warehouse_id, self.warehouse.id)
