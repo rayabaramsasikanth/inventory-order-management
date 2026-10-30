@@ -194,6 +194,22 @@ class CustomerAPITests(APITestCase):
         self.customer_one.refresh_from_db()
         self.assertEqual(self.customer_one.name, "Updated Alpha Stores")
 
+    def test_admin_can_update_customer(self):
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f"{self.list_url}{self.customer_one.pk}/",
+            {"name": "Admin Updated Customer"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.customer_one.refresh_from_db()
+        self.assertEqual(
+        self.customer_one.name,
+        "Admin Updated Customer",
+        )
 
     def test_sales_staff_cannot_create_customer(self):
         sales_group, _ = Group.objects.get_or_create(name=SALES_GROUP)
