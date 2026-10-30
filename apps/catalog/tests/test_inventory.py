@@ -480,3 +480,59 @@ class InventoryAPITests(APITestCase):
         self.assertTrue(
             Inventory.objects.filter(pk=self.inventory.id).exists()
         )
+
+    def test_warehouse_staff_can_update_inventory(self):
+        response = self.client.patch(
+            f"/api/catalog/inventory/{self.inventory.id}/",
+            {"reorder_level": 20},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.reorder_level, 20)
+
+        # Stock quantities must remain unchanged.
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(self.inventory.reserved_quantity, 10)
+
+    def test_warehouse_staff_can_delete_inventory(self):
+        inventory_id = self.inventory.id
+
+        response = self.client.delete(
+            f"/api/catalog/inventory/{inventory_id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(
+            Inventory.objects.filter(pk=inventory_id).exists()
+        )
+
+    def test_warehouse_staff_can_update_inventory(self):
+        response = self.client.patch(
+            f"/api/catalog/inventory/{self.inventory.id}/",
+            {"reorder_level": 20},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.inventory.refresh_from_db()
+        self.assertEqual(self.inventory.reorder_level, 20)
+
+        # Stock quantities must remain unchanged.
+        self.assertEqual(self.inventory.quantity, 100)
+        self.assertEqual(self.inventory.reserved_quantity, 10)
+
+    def test_warehouse_staff_can_delete_inventory(self):
+        inventory_id = self.inventory.id
+
+        response = self.client.delete(
+            f"/api/catalog/inventory/{inventory_id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(
+            Inventory.objects.filter(pk=inventory_id).exists()
+        )
