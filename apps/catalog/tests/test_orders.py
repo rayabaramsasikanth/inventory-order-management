@@ -832,6 +832,51 @@ class OrderReadPermissionTests(APITestCase):
             items=[{"product": product, "quantity": 2}],
         )
 
+    def test_anonymous_user_cannot_access_order_endpoints(self):
+        self.client.force_authenticate(user=None)
+
+        order_item = self.order.items.first()
+        order_url = reverse(
+            "order-detail",
+            kwargs={"pk": self.order.pk},
+        )
+
+        requests = [
+            self.client.get(reverse("order-list-create")),
+            self.client.post(
+                reverse("order-list-create"),
+                {},
+                format="json",
+            ),
+            self.client.get(order_url),
+            self.client.patch(
+                reverse(
+                    "order-status-update",
+                    kwargs={"pk": self.order.pk},
+                ),
+                {"status": Order.Status.CONFIRMED},
+                format="json",
+            ),
+            self.client.post(
+                reverse(
+                    "order-fulfilment",
+                    kwargs={"pk": self.order.pk},
+                ),
+                {
+                    "quantities": {
+                        str(order_item.pk): 1,
+                    }
+                },
+                format="json",
+            ),
+        ]
+
+        for response in requests:
+            self.assertEqual(
+                response.status_code,
+                status.HTTP_401_UNAUTHORIZED,
+            )
+
     def test_user_without_sales_or_admin_role_cannot_list_orders(self):
         self.client.force_authenticate(user=self.user)
 
