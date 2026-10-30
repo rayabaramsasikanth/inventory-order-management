@@ -926,3 +926,61 @@ class OrderReadPermissionTests(APITestCase):
             self.order.status,
             Order.Status.PENDING,
         )
+
+
+    def test_admin_can_fulfil_order(self):
+        self.user.groups.add(self.admin_group)
+        self.client.force_authenticate(user=self.user)
+
+        self.order.status = Order.Status.PROCESSING
+        self.order.save(update_fields=["status"])
+
+        order_item = self.order.items.first()
+
+        response = self.client.post(
+            reverse(
+                "order-fulfilment",
+                kwargs={"pk": self.order.pk},
+            ),
+            {
+                "quantities": {
+                    str(order_item.pk): 1,
+                }
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        order_item.refresh_from_db()
+        self.assertEqual(order_item.fulfilled_quantity, 1)
+
+    def test_warehouse_staff_can_fulfil_order(self):
+        warehouse_group, _ = Group.objects.get_or_create(
+            name=WAREHOUSE_GROUP,
+        )
+        self.user.groups.add(warehouse_group)
+        self.client.force_authenticate(user=self.user)
+
+        self.order.status = Order.Status.PROCESSING
+        self.order.save(update_fields=["status"])
+
+        order_item = self.order.items.first()
+
+        response = self.client.post(
+            reverse(
+                "order-fulfilment",
+                kwargs={"pk": self.order.pk},
+            ),
+            {
+                "quantities": {
+                    str(order_item.pk): 1,
+                }
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        order_item.refresh_from_db()
+        self.assertEqual(order_item.fulfilled_quantity, 1)
